@@ -13,13 +13,18 @@ import { TelemetryChart } from '@/components/TelemetryChart';
 import { ActivityLogView } from '@/components/ActivityLogView';
 import { SettingsModal } from '@/components/SettingsModal';
 import { PlantProfileModal, PLANT_PRESETS, PlantPreset } from '@/components/PlantProfileModal';
+import { MouseTrail } from '@/components/MouseTrail';
 import { parseAndCalibrateMoisture } from '@/lib/calibration';
 import { playSound } from '@/lib/sounds';
 import { TelemetryData, ActivityLog, HistoryPoint } from '@/types';
 
+// How many seconds without a new telemetry update before we consider ESP32 offline
+const ESP_OFFLINE_THRESHOLD_SEC = 6;
+
 export default function RootwiseDashboardPage() {
   const [dbUrl, setDbUrl] = useState<string>(DEFAULT_FIREBASE_CONFIG.databaseURL);
   const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [isEspOnline, setIsEspOnline] = useState<boolean>(false);
   const [isSimulated, setIsSimulated] = useState<boolean>(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
@@ -31,7 +36,6 @@ export default function RootwiseDashboardPage() {
 
   // Core Hardware & Telemetry State
   const [moisture, setMoisture] = useState<number | string | null>(null);
-  const [rawAdc, setRawAdc] = useState<number | undefined>(undefined);
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
   const [pumpState, setPumpState] = useState<'on' | 'off'>('off');
   const [mode, setMode] = useState<'auto' | 'manual'>('auto');
@@ -43,6 +47,9 @@ export default function RootwiseDashboardPage() {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
 
   const dbRef = useRef<Database | null>(null);
+  const lastTelemetryTimestampRef = useRef<number>(0);
+  const isInitialSnapshotRef = useRef<boolean>(true);
+  const espOnlineCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Append Activity Log
   const addLog = useCallback((message: string, type: ActivityLog['type'] = 'info') => {
@@ -64,6 +71,31 @@ export default function RootwiseDashboardPage() {
     });
   }, []);
 
+  // ESP32 online heartbeat check — if no new telemetry in N seconds, mark offline
+  useEffect(() => {
+    if (isSimulated) {
+      setIsEspOnline(true);
+      return;
+    }
+
+    espOnlineCheckRef.current = setInterval(() => {
+      if (lastTelemetryTimestampRef.current === 0) {
+        setIsEspOnline(false);
+        return;
+      }
+      const elapsed = (Date.now() - lastTelemetryTimestampRef.current) / 1000;
+      if (elapsed > ESP_OFFLINE_THRESHOLD_SEC) {
+        setIsEspOnline(false);
+      } else {
+        setIsEspOnline(true);
+      }
+    }, 2000);
+
+    return () => {
+      if (espOnlineCheckRef.current) clearInterval(espOnlineCheckRef.current);
+    };
+  }, [isSimulated]);
+
   // Firebase Realtime Connection & Telemetry Stream
   useEffect(() => {
     if (isSimulated) return;
@@ -75,41 +107,60 @@ export default function RootwiseDashboardPage() {
 
       setIsLoading(true);
 
-      // Connected State listener
+      // Connected State listener (browser <-> Firebase, NOT ESP32)
       const connectedRef = ref(database, '.info/connected');
       const unsubscribeConnected = onValue(connectedRef, (snapshot) => {
         const val = snapshot.val();
         setIsConnected(Boolean(val));
         if (val) {
           setIsLoading(false);
-          addLog('ESP32 link established over Firebase RTDB', 'success');
+          addLog('Firebase RTDB connection established', 'success');
         }
       });
 
-      // Telemetry stream listener
+      // Telemetry stream listener — this is the real ESP32 heartbeat
       const telemetryRef = ref(database, 'telemetry');
       const unsubscribeTelemetry = onValue(
         telemetryRef,
         (snapshot) => {
           const data = snapshot.val();
           setIsLoading(false);
-          if (data) {
-            setTelemetry(data);
-            const rawVal = data.moisture;
+          if (!data) return;
 
-            // Invert 12-bit ADC mapping: 4095 ADC -> 0% moisture
-            const calibrated = parseAndCalibrateMoisture(rawVal);
-            if (calibrated) {
-              setMoisture(calibrated.percentage);
-              setRawAdc(calibrated.rawAdc);
-              setLastUpdated(new Date().toLocaleTimeString());
-              recordHistory(calibrated.percentage);
-            }
+          // The very first snapshot delivered by Firebase RTDB on subscription
+          // is just the stale, historic data sitting in the cloud database.
+          // If the ESP32 is completely powered OFF, Firebase will send this snapshot
+          // once and then NEVER again.
+          // We only mark the ESP32 as ONLINE when an active packet is pushed by the hardware!
+          if (isInitialSnapshotRef.current) {
+            isInitialSnapshotRef.current = false;
+            setTelemetry(data);
+            return;
+          }
+
+          // Active live telemetry packet received from ESP32!
+          lastTelemetryTimestampRef.current = Date.now();
+          if (!isEspOnline) {
+            addLog('ESP32 stream discovered on Wi-Fi! Live telemetry auto-connected.', 'success');
+            if (soundEnabled) playSound('power-on');
+          }
+          setIsEspOnline(true);
+
+          setTelemetry(data);
+          const rawVal = data.moisture;
+
+          // Invert 12-bit ADC mapping: 4095 ADC -> 0% moisture
+          const calibrated = parseAndCalibrateMoisture(rawVal);
+          if (calibrated) {
+            setMoisture(calibrated.percentage);
+            setLastUpdated(new Date().toLocaleTimeString());
+            recordHistory(calibrated.percentage);
           }
         },
         (error) => {
           console.warn('Firebase telemetry error:', error);
           setIsConnected(false);
+          setIsEspOnline(false);
           setIsLoading(false);
           addLog(`Stream error: ${error.message}`, 'warning');
         }
@@ -133,6 +184,7 @@ export default function RootwiseDashboardPage() {
     } catch (err: any) {
       console.error('Firebase setup failed:', err);
       setIsConnected(false);
+      setIsEspOnline(false);
       setIsLoading(false);
       addLog(`Failed to connect: ${err?.message || 'Check database URL'}`, 'warning');
     }
@@ -197,14 +249,14 @@ export default function RootwiseDashboardPage() {
     }
   }, [setPump, toggleMode]);
 
-  // Simulation Engine (when hardware is offline or demo mode enabled)
+  // Simulation Engine
   useEffect(() => {
     if (!isSimulated) return;
 
     setIsConnected(true);
+    setIsEspOnline(true);
     if (moisture === null) {
       setMoisture(52);
-      setRawAdc(Math.round(4095 - (52 / 100) * (4095 - 1200)));
       recordHistory(52);
     }
 
@@ -215,13 +267,8 @@ export default function RootwiseDashboardPage() {
         if (pumpState === 'on') {
           current = Math.min(95, current + Math.floor(Math.random() * 3 + 2));
         } else {
-          // Slow natural soil evaporation
           current = Math.max(0, current - (Math.random() > 0.4 ? 1 : 0));
         }
-
-        // Inverted ADC formula: 0% = 4095, 100% = 1200
-        const simAdc = Math.round(4095 - (current / 100) * (4095 - 1200));
-        setRawAdc(simAdc);
 
         recordHistory(current);
         setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
@@ -251,37 +298,53 @@ export default function RootwiseDashboardPage() {
     if (nextState) {
       addLog('Demo Simulation Mode enabled. Generating virtual soil readings.', 'info');
       setMoisture(46);
-      setRawAdc(Math.round(4095 - (46 / 100) * (4095 - 1200)));
       recordHistory(46);
     } else {
       addLog('Reconnecting to live physical ESP32 stream.', 'info');
       setMoisture(null);
-      setRawAdc(undefined);
+      isInitialSnapshotRef.current = true;
+      lastTelemetryTimestampRef.current = 0;
+      setIsEspOnline(false);
     }
   };
 
   const handleForceRefresh = () => {
     if (soundEnabled) playSound('click');
     setIsLoading(true);
-    addLog('Refreshing Firebase telemetry feed...', 'info');
+    addLog('Scanning network for ESP32 telemetry broadcast...', 'info');
     setTimeout(() => {
       setIsLoading(false);
-      setLastUpdated(new Date().toLocaleTimeString());
-    }, 600);
+      const isAlive =
+        lastTelemetryTimestampRef.current !== 0 &&
+        (Date.now() - lastTelemetryTimestampRef.current) / 1000 <= ESP_OFFLINE_THRESHOLD_SEC;
+      if (isAlive) {
+        setLastUpdated(new Date().toLocaleTimeString());
+        addLog('ESP32 stream verified live and transmitting', 'success');
+      } else {
+        addLog('Continuous background scanner active. Waiting for ESP32 on Wi-Fi...', 'info');
+      }
+    }, 500);
   };
+
+  // Use isEspOnline for actual hardware status (not just Firebase connectivity)
+  const effectiveOnline = isSimulated || isEspOnline;
 
   const targetRange: [number, number] = [currentPlant.minMoisture, currentPlant.maxMoisture];
 
   return (
     <>
+      {/* Mouse Trail Effect */}
+      <MouseTrail />
+
       {/* Animated Forest Background with Leaves and Fireflies */}
       <ForestBackground />
 
       <main className="app-container">
         <div className="glass-panel">
-          {/* Header */}
+          {/* Header — uses isEspOnline and passes active scanning state */}
           <Header
-            isConnected={isConnected}
+            isConnected={isEspOnline}
+            isScanning={!effectiveOnline}
             isSimulated={isSimulated}
             onToggleSimulated={handleToggleSimulation}
             soundEnabled={soundEnabled}
@@ -303,37 +366,63 @@ export default function RootwiseDashboardPage() {
           />
 
           <div className="dashboard-content">
+            {/* ESP32 Continuous Discovery & Scanning Banner */}
+            {!effectiveOnline && (
+              <div className="esp-offline-banner">
+                <div className="radar-scan-dot" />
+                <div style={{ flex: 1 }}>
+                  <strong>🔍 Scanning for ESP32 on Wi-Fi...</strong>
+                  <p>
+                    Rootwise is continuously scanning your network. As soon as your ESP32 powers on and connects to the internet, it will automatically connect and stream live soil readings.
+                  </p>
+                  <div className="scanner-progress-track">
+                    <div className="scanner-progress-bar" />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={handleToggleSimulation}
+                    className="banner-sim-btn"
+                    title="Explore dashboard with virtual soil moisture"
+                  >
+                    Try Demo Mode
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Top Duo: Botanical Plant Companion & Moisture Centerpiece */}
             <div className="hero-duo-grid">
               <PlantCompanion
                 plantName={currentPlant.name}
                 location={currentPlant.location}
                 moisture={typeof moisture === 'number' ? moisture : typeof moisture === 'string' ? parseFloat(moisture) || null : null}
-                isPumpOn={pumpState === 'on'}
+                isPumpOn={effectiveOnline && pumpState === 'on'}
                 mode={mode}
                 onQuickWater={() => setPump('on')}
                 onOpenPlantProfile={() => setIsPlantModalOpen(true)}
+                isOnline={effectiveOnline}
               />
 
               <MoistureGauge
                 moisture={moisture}
-                rawAdc={rawAdc}
-                isPumpOn={pumpState === 'on'}
+                isPumpOn={effectiveOnline && pumpState === 'on'}
                 mode={mode}
                 lastUpdated={lastUpdated}
                 targetRange={targetRange}
-                isCalibrated={true}
                 isSimulated={isSimulated}
+                isOnline={effectiveOnline}
               />
             </div>
 
-            {/* Actuator Controls with Dosing Presets & Safeguards */}
+            {/* Actuator Controls */}
             <PumpController
               mode={mode}
               pumpState={pumpState}
               onSetPump={setPump}
               onToggleMode={toggleMode}
-              disabled={!isConnected && !isSimulated}
+              disabled={!effectiveOnline}
             />
 
             {/* Environmental Readings & Hardware Status */}
@@ -343,12 +432,11 @@ export default function RootwiseDashboardPage() {
               pumpState={pumpState}
               lastUpdated={lastUpdated}
               latencyMs={latencyMs}
-              rawAdc={rawAdc}
-              calibratedMoisture={moisture !== null ? Number(moisture) : null}
+              isOnline={effectiveOnline}
             />
 
             {/* Realtime Moisture Trajectory Chart with Target Band */}
-            <TelemetryChart history={history} targetRange={targetRange} />
+            <TelemetryChart history={history} targetRange={targetRange} isOnline={effectiveOnline} />
 
             {/* Activity & Actuation Event Logs */}
             <ActivityLogView
@@ -362,10 +450,7 @@ export default function RootwiseDashboardPage() {
             {/* Footer */}
             <footer className="footer-tools">
               <span>Rootwise • Living Soil Automation</span>
-              <div style={{ display: 'flex', gap: '16px' }}>
-                <span>Hardware: ESP32 Node (4095 ADC = 0% Dry)</span>
-                <span>Cloud: Firebase RTDB</span>
-              </div>
+              <span>Cloud: Firebase RTDB</span>
             </footer>
           </div>
         </div>

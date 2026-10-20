@@ -14,6 +14,7 @@ interface HeaderProps {
   isLoading: boolean;
   plantName: string;
   onOpenPlantProfile: () => void;
+  isScanning?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -27,6 +28,7 @@ export const Header: React.FC<HeaderProps> = ({
   isLoading,
   plantName,
   onOpenPlantProfile,
+  isScanning = false,
 }) => {
   return (
     <header className="dashboard-header">
@@ -97,18 +99,28 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Real Hardware Verification Status Badge */}
         <div
           className={`status-badge ${
-            isSimulated ? 'simulated' : isConnected ? 'online' : 'offline'
+            isSimulated ? 'simulated' : isConnected ? 'online' : isScanning ? 'scanning' : 'offline'
           }`}
           title={
             isSimulated
               ? 'Virtual Simulated Telemetry'
               : isConnected
               ? 'ESP32 Realtime Database Online'
-              : 'Waiting for ESP32 heartbeat'
+              : isScanning
+              ? 'Rootwise is actively scanning for your ESP32 on Wi-Fi...'
+              : 'Please connect your ESP32 to Wi-Fi to continue'
           }
         >
-          <span className="pulse-dot" />
-          <span>{isSimulated ? 'SIMULATED' : isConnected ? 'ESP32 ONLINE' : 'DISCONNECTED'}</span>
+          <span className={isConnected ? 'pulse-dot' : isScanning ? 'radar-scan-dot' : 'pulse-dot'} />
+          <span>
+            {isSimulated
+              ? 'SIMULATED'
+              : isConnected
+              ? 'ESP32 ONLINE'
+              : isScanning
+              ? 'SCANNING FOR ESP32...'
+              : 'ESP32 OFFLINE'}
+          </span>
         </div>
       </div>
     </header>

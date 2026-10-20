@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Power, Cpu, Droplet, Sparkles, Timer, ShieldCheck } from 'lucide-react';
+import { Power, Cpu, Droplet, Sparkles, Timer, ShieldCheck, WifiOff } from 'lucide-react';
 
 interface PumpControllerProps {
   mode: 'auto' | 'manual';
@@ -39,6 +39,7 @@ export const PumpController: React.FC<PumpControllerProps> = ({
   }, [secondsRemaining, onSetPump]);
 
   const handleStartPreset = (name: string, durationSec: number) => {
+    if (disabled) return;
     setActivePreset(name);
     setSecondsRemaining(durationSec);
     onSetPump('on');
@@ -52,6 +53,28 @@ export const PumpController: React.FC<PumpControllerProps> = ({
 
   return (
     <div className="actuators-card">
+      {disabled && (
+        <div
+          style={{
+            background: 'rgba(239, 68, 68, 0.12)',
+            border: '1px solid rgba(239, 68, 68, 0.35)',
+            borderRadius: 12,
+            padding: '10px 14px',
+            marginBottom: 16,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            color: '#fca5a5',
+            fontSize: 13,
+          }}
+        >
+          <WifiOff size={16} color="#f87171" style={{ flexShrink: 0 }} />
+          <span>
+            <strong>Controls Locked:</strong> Please connect your ESP32 to Wi-Fi to operate irrigation pumps and change modes.
+          </span>
+        </div>
+      )}
+
       <div className="actuators-header">
         <div>
           <span className="eyebrow-label">Physical Actuators & Safeguards</span>
@@ -65,10 +88,10 @@ export const PumpController: React.FC<PumpControllerProps> = ({
             onClick={onToggleMode}
             disabled={disabled}
             className={`mode-toggle-pill ${mode === 'auto' ? 'mode-auto' : 'mode-manual'}`}
-            title="Click to toggle between Auto AI and Manual control"
+            title={disabled ? 'Connect ESP32 to Wi-Fi to switch mode' : 'Click to toggle between Auto AI and Manual control'}
           >
             <Cpu size={14} />
-            <span>{mode === 'auto' ? 'AI Auto Mode' : 'Manual Mode'}</span>
+            <span>{disabled ? 'Offline' : mode === 'auto' ? 'AI Auto Mode' : 'Manual Mode'}</span>
           </button>
         </div>
       </div>

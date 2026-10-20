@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Cpu, Power, Wifi, ShieldCheck, Activity } from 'lucide-react';
+import { Cpu, Power, Wifi, WifiOff } from 'lucide-react';
 import { TelemetryData } from '@/types';
 
 interface EnvironmentCardsProps {
@@ -10,8 +10,7 @@ interface EnvironmentCardsProps {
   pumpState: 'on' | 'off';
   lastUpdated: string | null;
   latencyMs?: number;
-  rawAdc?: number;
-  calibratedMoisture?: number | null;
+  isOnline?: boolean;
 }
 
 export const EnvironmentCards: React.FC<EnvironmentCardsProps> = ({
@@ -20,37 +19,36 @@ export const EnvironmentCards: React.FC<EnvironmentCardsProps> = ({
   pumpState,
   lastUpdated,
   latencyMs,
-  rawAdc,
-  calibratedMoisture,
+  isOnline = false,
 }) => {
   return (
     <div className="side-cards-column">
       {/* Operating Mode Card */}
       <div className="mini-telemetry-card">
         <div className="mini-card-info">
-          <span className="mini-card-label">Automation State</span>
+          <span className="mini-card-label">Hardware Discovery</span>
           <div className="mini-card-value">
             <span
               style={{
-                color: mode === 'auto' ? '#74c69d' : '#38bdf8',
+                color: !isOnline ? '#38bdf8' : mode === 'auto' ? '#74c69d' : '#38bdf8',
                 fontWeight: 700,
               }}
             >
-              {mode === 'auto' ? 'Automated AI Mode' : 'Direct Manual Control'}
+              {!isOnline ? 'Scanning for ESP32...' : mode === 'auto' ? 'Automated AI Mode' : 'Direct Manual Control'}
             </span>
           </div>
-          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-            {mode === 'auto' ? 'ESP32 monitors moisture thresholds' : 'Human actuator overrides active'}
+          <span style={{ fontSize: 11, color: !isOnline ? '#7dd3fc' : 'var(--text-dim)' }}>
+            {!isOnline ? 'Continuous network scan active — will link automatically' : mode === 'auto' ? 'ESP32 monitors moisture thresholds' : 'Human actuator overrides active'}
           </span>
         </div>
         <div
           className="mini-card-icon"
           style={{
-            background: mode === 'auto' ? 'rgba(82, 183, 136, 0.15)' : 'rgba(56, 189, 248, 0.15)',
-            border: `1px solid ${mode === 'auto' ? 'rgba(82, 183, 136, 0.35)' : 'rgba(56, 189, 248, 0.3)'}`,
+            background: !isOnline ? 'rgba(56, 189, 248, 0.15)' : mode === 'auto' ? 'rgba(82, 183, 136, 0.15)' : 'rgba(56, 189, 248, 0.15)',
+            border: `1px solid ${!isOnline ? 'rgba(56, 189, 248, 0.35)' : mode === 'auto' ? 'rgba(82, 183, 136, 0.35)' : 'rgba(56, 189, 248, 0.3)'}`,
           }}
         >
-          <Cpu size={22} color={mode === 'auto' ? '#74c69d' : '#38bdf8'} />
+          <Cpu size={22} color={!isOnline ? '#38bdf8' : mode === 'auto' ? '#74c69d' : '#38bdf8'} />
         </div>
       </div>
 
@@ -61,52 +59,25 @@ export const EnvironmentCards: React.FC<EnvironmentCardsProps> = ({
           <div className="mini-card-value">
             <span
               style={{
-                color: pumpState === 'on' ? '#34d399' : 'var(--text-muted)',
+                color: !isOnline ? 'var(--text-muted)' : pumpState === 'on' ? '#34d399' : 'var(--text-muted)',
                 fontWeight: 800,
               }}
             >
-              {pumpState === 'on' ? 'VALVE OPEN (IRRIGATING)' : 'VALVE CLOSED (IDLE)'}
+              {!isOnline ? 'VALVE CLOSED (WAITING FOR ESP32)' : pumpState === 'on' ? 'VALVE OPEN (IRRIGATING)' : 'VALVE CLOSED (IDLE)'}
             </span>
           </div>
           <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-            {pumpState === 'on' ? 'Dispensing water' : 'Static water line sealed'}
+            {!isOnline ? 'Connects automatically when ESP32 powers on Wi-Fi' : pumpState === 'on' ? 'Dispensing water' : 'Static water line sealed'}
           </span>
         </div>
         <div
           className="mini-card-icon"
           style={{
-            background: pumpState === 'on' ? 'rgba(52, 211, 153, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-            border: `1px solid ${pumpState === 'on' ? 'rgba(52, 211, 153, 0.45)' : 'rgba(255, 255, 255, 0.08)'}`,
+            background: isOnline && pumpState === 'on' ? 'rgba(52, 211, 153, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+            border: `1px solid ${isOnline && pumpState === 'on' ? 'rgba(52, 211, 153, 0.45)' : 'rgba(255, 255, 255, 0.08)'}`,
           }}
         >
-          <Power size={22} color={pumpState === 'on' ? '#34d399' : '#64748b'} />
-        </div>
-      </div>
-
-      {/* Inverted Sensor Calibration Status Card */}
-      <div className="mini-telemetry-card">
-        <div className="mini-card-info">
-          <span className="mini-card-label">Soil Sensor Calibration</span>
-          <div className="mini-card-value" style={{ fontSize: 16 }}>
-            <span>
-              {rawAdc !== undefined ? `ADC: ${rawAdc}` : '12-bit ADC Inverted'}
-            </span>
-            <span style={{ fontSize: 13, color: '#52b788', fontWeight: 600, marginLeft: 6 }}>
-              {calibratedMoisture !== null && calibratedMoisture !== undefined ? `(${calibratedMoisture}%)` : ''}
-            </span>
-          </div>
-          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-            Inverted mapping active: 4095 ADC = 0% moisture
-          </span>
-        </div>
-        <div
-          className="mini-card-icon"
-          style={{
-            background: 'rgba(82, 183, 136, 0.15)',
-            border: '1px solid rgba(82, 183, 136, 0.35)',
-          }}
-        >
-          <ShieldCheck size={22} color="#74c69d" />
+          <Power size={22} color={isOnline && pumpState === 'on' ? '#34d399' : '#64748b'} />
         </div>
       </div>
 
@@ -117,15 +88,24 @@ export const EnvironmentCards: React.FC<EnvironmentCardsProps> = ({
           justifyContent: 'space-between',
           alignItems: 'center',
           fontSize: 11,
-          color: 'var(--text-dim)',
+          color: isOnline ? 'var(--text-dim)' : '#7dd3fc',
           padding: '4px 6px',
         }}
       >
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Wifi size={12} color="#52b788" />
-          ESP32 Stream: {lastUpdated ? `Live @ ${lastUpdated}` : 'Listening...'}
+          {isOnline ? (
+            <Wifi size={12} color="#52b788" />
+          ) : (
+            <Wifi size={12} color="#38bdf8" className="animate-spin" />
+          )}
+          <span>
+            ESP32 Stream:{' '}
+            <strong style={{ color: isOnline ? '#74c69d' : '#38bdf8' }}>
+              {isOnline ? (lastUpdated ? `Live @ ${lastUpdated}` : 'Active') : 'Scanning (Auto-connects on Wi-Fi)'}
+            </strong>
+          </span>
         </span>
-        {latencyMs !== undefined && (
+        {isOnline && latencyMs !== undefined && (
           <span style={{ fontFamily: 'JetBrains Mono, monospace' }}>{latencyMs}ms ping</span>
         )}
       </div>

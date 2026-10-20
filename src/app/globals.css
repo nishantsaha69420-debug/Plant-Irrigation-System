@@ -33,6 +33,7 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  cursor: none !important;
 }
 
 body {
@@ -48,6 +49,7 @@ body {
   position: relative;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
+  cursor: none;
 }
 
 /* Subtle Organic Leaf Noise Pattern Overlay */
@@ -210,6 +212,13 @@ body::before {
   border: 1px solid rgba(245, 158, 11, 0.35);
 }
 
+.status-badge.scanning {
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.25);
+}
+
 .pulse-dot {
   width: 8px;
   height: 8px;
@@ -217,6 +226,21 @@ body::before {
   background-color: currentColor;
   box-shadow: 0 0 8px currentColor;
   animation: pulseDot 2s infinite ease-in-out;
+}
+
+.radar-scan-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #38bdf8;
+  box-shadow: 0 0 10px #38bdf8;
+  animation: radarScan 1.2s infinite ease-in-out;
+}
+
+@keyframes radarScan {
+  0% { transform: scale(0.8); opacity: 0.4; box-shadow: 0 0 4px #38bdf8; }
+  50% { transform: scale(1.3); opacity: 1; box-shadow: 0 0 14px #38bdf8; }
+  100% { transform: scale(0.8); opacity: 0.4; box-shadow: 0 0 4px #38bdf8; }
 }
 
 @keyframes pulseDot {
@@ -682,8 +706,8 @@ body::before {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
+  flex-wrap: nowrap;
+  gap: 8px;
   padding-top: 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   font-size: 12px;
@@ -694,12 +718,15 @@ body::before {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .info-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 /* Actuators Card */
@@ -1222,3 +1249,221 @@ body::before {
   font-size: 12px;
   color: var(--text-dim);
 }
+
+/* ESP32 Offline Warning Banner */
+.esp-offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: linear-gradient(90deg, rgba(244, 63, 94, 0.12), rgba(251, 146, 60, 0.1));
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  border-radius: 18px;
+  padding: 18px 22px;
+  animation: fadeSlideIn 0.5s ease-out;
+}
+
+.esp-offline-banner strong {
+  font-size: 15px;
+  color: #fca5a5;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.esp-offline-banner p {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.offline-icon-pulse {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #f43f5e;
+  box-shadow: 0 0 12px rgba(244, 63, 94, 0.6);
+  animation: offlinePulse 1.5s infinite ease-in-out;
+  flex-shrink: 0;
+}
+
+@keyframes offlinePulse {
+  0%, 100% { transform: scale(1); opacity: 1; box-shadow: 0 0 8px rgba(244, 63, 94, 0.4); }
+  50% { transform: scale(1.3); opacity: 0.7; box-shadow: 0 0 20px rgba(244, 63, 94, 0.8); }
+}
+
+@keyframes fadeSlideIn {
+  0% { opacity: 0; transform: translateY(-10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Button Click Ripple & Bounce Animation */
+.pump-action-btn,
+.mode-toggle-pill,
+.preset-btn,
+.tool-badge-btn,
+.speech-action-btn,
+.header-plant-selector,
+.emergency-stop-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+.pump-action-btn:active,
+.mode-toggle-pill:active,
+.preset-btn:active,
+.tool-badge-btn:active,
+.speech-action-btn:active,
+.header-plant-selector:active,
+.emergency-stop-btn:active {
+  transform: scale(0.95) !important;
+  transition: transform 0.08s ease-out !important;
+}
+
+/* Ripple effect via pseudo-element on click */
+.pump-action-btn::after,
+.mode-toggle-pill::after,
+.preset-btn::after,
+.tool-badge-btn::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: width 0.5s ease-out, height 0.5s ease-out, opacity 0.5s ease-out;
+}
+
+.pump-action-btn:active::after,
+.mode-toggle-pill:active::after,
+.preset-btn:active::after,
+.tool-badge-btn:active::after {
+  width: 300px;
+  height: 300px;
+  opacity: 0;
+  transition: 0s;
+}
+
+/* Mode toggle bounce when switching */
+.mode-toggle-pill {
+  transition: var(--transition-smooth), transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.mode-toggle-pill:hover {
+  transform: translateY(-1px);
+}
+
+/* Pump button glow pulse when active */
+.btn-turn-off {
+  animation: pumpOffGlow 2s infinite ease-in-out;
+}
+
+@keyframes pumpOffGlow {
+  0%, 100% { box-shadow: 0 0 10px rgba(244, 63, 94, 0.2); }
+  50% { box-shadow: 0 0 25px rgba(244, 63, 94, 0.5), 0 0 50px rgba(244, 63, 94, 0.15); }
+}
+
+/* ESP32 Offline Warning Banner */
+.esp-offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 14px;
+  padding: 12px 18px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.1);
+  backdrop-filter: blur(8px);
+  animation: fadeIn 0.3s ease-out;
+}
+
+.offline-icon-pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #ef4444;
+  box-shadow: 0 0 10px #ef4444;
+  flex-shrink: 0;
+  animation: pulseDot 1.5s infinite ease-in-out;
+}
+
+.esp-offline-banner strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fca5a5;
+  letter-spacing: 0.02em;
+  margin-bottom: 2px;
+}
+
+.esp-offline-banner p {
+  font-size: 12px;
+  color: rgba(254, 202, 202, 0.85);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.banner-sim-btn {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fde68a;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: var(--transition-smooth);
+}
+
+.banner-sim-btn:hover {
+  background: rgba(245, 158, 11, 0.35);
+  transform: translateY(-1px);
+}
+
+.banner-refresh-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: var(--transition-smooth);
+}
+
+.banner-refresh-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+}
+
+/* Continuous Radar Scan Animation for Hardware Discovery */
+.scanner-progress-track {
+  width: 100%;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 99px;
+  overflow: hidden;
+  margin-top: 10px;
+  position: relative;
+}
+
+.scanner-progress-bar {
+  width: 35%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, #38bdf8, #52b788, transparent);
+  border-radius: 99px;
+  position: absolute;
+  animation: scanBar 1.8s infinite ease-in-out;
+}
+
+@keyframes scanBar {
+  0% { left: -35%; }
+  100% { left: 100%; }
+}
+

@@ -7,12 +7,32 @@ import { TrendingUp, Sprout } from 'lucide-react';
 interface TelemetryChartProps {
   history: HistoryPoint[];
   targetRange?: [number, number];
+  isOnline?: boolean;
 }
 
 export const TelemetryChart: React.FC<TelemetryChartProps> = ({
   history,
   targetRange = [40, 70],
+  isOnline = false,
 }) => {
+  if (!isOnline) {
+    return (
+      <div className="history-card">
+        <div className="history-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <TrendingUp size={16} color="#38bdf8" />
+            <span className="section-title">Root Zone Moisture Trajectory</span>
+          </div>
+          <span style={{ fontSize: 12, color: '#7dd3fc', fontWeight: 600 }}>Scanning for ESP32...</span>
+        </div>
+        <div style={{ height: 110, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#7dd3fc', fontSize: 13, gap: 6 }}>
+          <span>🔍 <strong>Scanning network stream:</strong> Waiting for ESP32 connection.</span>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Real-time trajectory curves will render automatically once telemetry packets begin streaming.</span>
+        </div>
+      </div>
+    );
+  }
+
   if (history.length < 2) {
     return (
       <div className="history-card">

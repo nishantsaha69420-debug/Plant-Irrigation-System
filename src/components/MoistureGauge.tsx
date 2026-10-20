@@ -1,30 +1,29 @@
 'use client';
 
 import React from 'react';
-import { Droplet, CheckCircle2, AlertTriangle, ShieldCheck, Clock, Waves } from 'lucide-react';
+import { Droplet, CheckCircle2, AlertTriangle, Clock, Waves } from 'lucide-react';
 
 interface MoistureGaugeProps {
   moisture: number | string | null;
-  rawAdc?: number;
   isPumpOn: boolean;
   mode: 'auto' | 'manual';
   lastUpdated: string | null;
-  targetRange?: [number, number]; // default [40, 70]
-  isCalibrated?: boolean;
+  targetRange?: [number, number];
   isSimulated?: boolean;
+  isOnline?: boolean;
 }
 
 export const MoistureGauge: React.FC<MoistureGaugeProps> = ({
   moisture,
-  rawAdc,
   isPumpOn,
   mode,
   lastUpdated,
   targetRange = [40, 70],
-  isCalibrated = true,
   isSimulated = false,
+  isOnline = false,
 }) => {
-  // Validate and parse numerical percentage
+  const effectiveActive = isSimulated || isOnline;
+
   const numMoisture =
     typeof moisture === 'number'
       ? moisture
@@ -32,15 +31,18 @@ export const MoistureGauge: React.FC<MoistureGaugeProps> = ({
       ? parseFloat(moisture)
       : null;
 
-  const validPct = numMoisture !== null ? Math.min(100, Math.max(0, numMoisture)) : null;
+  const validPct = effectiveActive && numMoisture !== null ? Math.min(100, Math.max(0, numMoisture)) : null;
 
-  // Determine condition
   let conditionText = 'Awaiting Sensor Signal';
   let conditionBadgeClass = 'condition-neutral';
   let barGradient = 'linear-gradient(90deg, #d8f3dc, #52b788)';
   let ConditionIcon = Clock;
 
-  if (validPct === null) {
+  if (!effectiveActive) {
+    conditionText = 'Scanning for ESP32...';
+    conditionBadgeClass = 'condition-neutral';
+    ConditionIcon = Clock;
+  } else if (validPct === null) {
     conditionText = 'Sensor Disconnected';
     conditionBadgeClass = 'condition-neutral';
   } else if (validPct < targetRange[0]) {
@@ -60,7 +62,6 @@ export const MoistureGauge: React.FC<MoistureGaugeProps> = ({
     ConditionIcon = CheckCircle2;
   }
 
-  // Calculate target range indicator positions (in %)
   const targetMinPos = targetRange[0];
   const targetWidth = targetRange[1] - targetRange[0];
 
@@ -69,18 +70,13 @@ export const MoistureGauge: React.FC<MoistureGaugeProps> = ({
       <div className="centerpiece-top-row">
         <div>
           <span className="eyebrow-label">Primary Living Telemetry</span>
-          <h3 className="centerpiece-title">Calibrated Soil Moisture</h3>
+          <h3 className="centerpiece-title">Soil Moisture Level</h3>
         </div>
 
         <div className="centerpiece-status-badges">
           <div className={`status-pill ${conditionBadgeClass}`}>
             <ConditionIcon size={13} />
             <span>{conditionText}</span>
-          </div>
-
-          <div className="calibrated-tag" title="Inverted capacitive/resistive sensor calibration: 4095 ADC = 0% moisture">
-            <ShieldCheck size={12} color="#52b788" />
-            <span>{rawAdc !== undefined ? `ADC: ${rawAdc} (Inverted)` : '4095 ADC = 0% (Inverted)'}</span>
           </div>
         </div>
       </div>
@@ -102,15 +98,15 @@ export const MoistureGauge: React.FC<MoistureGaugeProps> = ({
               color={validPct !== null && validPct < targetRange[0] ? '#fb923c' : '#52b788'}
             />
             <span style={{ fontWeight: 600, color: 'var(--text-main)', fontSize: 14 }}>
-              {validPct !== null ? `${validPct.toFixed(1)}% Saturation` : 'No reading yet'}
+              {validPct !== null ? `${validPct.toFixed(1)}% Saturation` : effectiveActive ? 'No reading yet' : 'Hardware Disconnected'}
             </span>
           </div>
           <span className="last-read-timestamp">
-            {rawAdc !== undefined
-              ? `Sensor 12-bit ADC: ${rawAdc} (4095 = dry 0%)`
-              : lastUpdated
-              ? `Last verified reading: ${lastUpdated}`
-              : 'Awaiting incoming packet from ESP32'}
+            {effectiveActive
+              ? lastUpdated
+                ? `Last verified reading: ${lastUpdated}`
+                : 'Awaiting incoming packet from ESP32'
+              : '🔍 Continuously scanning — connects automatically when ESP32 is on Wi-Fi'}
           </span>
         </div>
       </div>
@@ -118,7 +114,6 @@ export const MoistureGauge: React.FC<MoistureGaugeProps> = ({
       {/* Proportional Linear Moisture Scale with Target Range Band */}
       <div className="moisture-bar-container">
         <div className="bar-track">
-          {/* Target Zone Shading overlay */}
           <div
             className="target-zone-band"
             style={{
@@ -130,7 +125,6 @@ export const MoistureGauge: React.FC<MoistureGaugeProps> = ({
             <span className="target-zone-label">Target {targetRange[0]}–{targetRange[1]}%</span>
           </div>
 
-          {/* Active Moisture Fill Bar */}
           <div
             className="bar-fill"
             style={{
@@ -138,7 +132,6 @@ export const MoistureGauge: React.FC<MoistureGaugeProps> = ({
               background: barGradient,
             }}
           >
-            {/* Water Wave animation inside bar */}
             <div className="bar-water-shimmer" />
             {validPct !== null && validPct > 8 && (
               <div className="bar-handle-dot" />
@@ -146,27 +139,35 @@ export const MoistureGauge: React.FC<MoistureGaugeProps> = ({
           </div>
         </div>
 
-        {/* 0 to 100% Scale Markers */}
         <div className="scale-labels-row">
-          <span>0% (Dry • 4095 ADC)</span>
+          <span>0% (Dry)</span>
           <span style={{ color: '#52b788', fontWeight: 600 }}>Target: {targetRange[0]}%–{targetRange[1]}%</span>
-          <span>100% (Wet • ~1200 ADC)</span>
+          <span>100% (Saturated)</span>
         </div>
       </div>
 
-      {/* Realtime Context Bar */}
+      {/* Realtime Context Bar — always 3 in a row, no wrapping */}
       <div className="centerpiece-footer-info">
         <div className="info-item">
           <span className="info-dot" style={{ backgroundColor: isPumpOn ? '#38bdf8' : '#737b70' }} />
-          <span>Pump Valve: <strong>{isPumpOn ? 'DISPENSING WATER' : 'CLOSED'}</strong></span>
+          <span>Pump: <strong>{isPumpOn ? 'ACTIVE' : 'OFF'}</strong></span>
         </div>
 
         <div className="info-item">
-          <span>Operating Mode: <strong>{mode.toUpperCase()}</strong></span>
+          <span>Mode: <strong>{mode.toUpperCase()}</strong></span>
         </div>
 
         <div className="info-item">
-          <span>Stream: <strong>{isSimulated ? 'DEMO VIRTUAL' : 'LIVE ESP32 RTDB'}</strong></span>
+          <span>
+            Stream:{' '}
+            <strong
+              style={{
+                color: isSimulated ? '#fbbf24' : isOnline ? '#34d399' : '#38bdf8',
+              }}
+            >
+              {isSimulated ? 'DEMO' : isOnline ? 'LIVE' : 'SCANNING...'}
+            </strong>
+          </span>
         </div>
       </div>
     </div>

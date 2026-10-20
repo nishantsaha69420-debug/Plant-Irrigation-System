@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Droplet, Sparkles, Heart, Sun, Info } from 'lucide-react';
+import { Droplet, Sparkles, Heart, Sun, Info, WifiOff } from 'lucide-react';
 
 interface PlantCompanionProps {
   plantName: string;
@@ -11,6 +11,7 @@ interface PlantCompanionProps {
   mode: 'auto' | 'manual';
   onQuickWater: () => void;
   onOpenPlantProfile: () => void;
+  isOnline?: boolean;
 }
 
 export const PlantCompanion: React.FC<PlantCompanionProps> = ({
@@ -21,7 +22,11 @@ export const PlantCompanion: React.FC<PlantCompanionProps> = ({
   mode,
   onQuickWater,
   onOpenPlantProfile,
+  isOnline = false,
 }) => {
+  // Never allow pump animation or drinking status if ESP32 is offline!
+  const effectivePumpOn = isOnline && isPumpOn;
+
   // Determine plant health and expression
   let statusMessage = 'Checking plant vitals...';
   let statusMood = 'Normal';
@@ -30,7 +35,19 @@ export const PlantCompanion: React.FC<PlantCompanionProps> = ({
   let leafDroopDeg = 0;
   let soilHue = '#4a3728'; // Rich moist soil
 
-  if (moisture !== null) {
+  if (!isOnline) {
+    statusMessage = `Scanning for ESP32 on Wi-Fi... Power on your microcontroller and Rootwise will automatically connect!`;
+    statusMood = 'Scanning for Wi-Fi...';
+    moodColor = '#38bdf8';
+    moodIcon = WifiOff;
+    leafDroopDeg = 1;
+    soilHue = '#4a3728';
+  } else if (effectivePumpOn) {
+    statusMessage = `Irrigation valve open! Dispensing fresh water directly to roots...`;
+    statusMood = 'Drinking';
+    moodColor = '#38bdf8';
+    moodIcon = Droplet;
+  } else if (moisture !== null) {
     if (moisture < 25) {
       statusMessage = `Your ${plantName} is thirsty! Soil is dry and needs a drink.`;
       statusMood = 'Parched';
@@ -56,13 +73,6 @@ export const PlantCompanion: React.FC<PlantCompanionProps> = ({
       leafDroopDeg = -3; // perked up
       soilHue = '#3f2e20';
     }
-  }
-
-  if (isPumpOn) {
-    statusMessage = `Irrigation valve open! Dispensing fresh water directly to roots...`;
-    statusMood = 'Drinking';
-    moodColor = '#38bdf8';
-    moodIcon = Droplet;
   }
 
   return (
@@ -96,8 +106,8 @@ export const PlantCompanion: React.FC<PlantCompanionProps> = ({
 
       {/* Visual Organic Plant & Soil Cross-section Scene */}
       <div className="botanical-scene">
-        {/* Animated Water Droplets when Pump is ON */}
-        {isPumpOn && (
+        {/* Animated Water Droplets when Pump is ON and ESP32 is Online */}
+        {effectivePumpOn && (
           <div className="water-spray-particles" aria-hidden="true">
             <div className="drop drop-1" />
             <div className="drop drop-2" />
@@ -221,9 +231,9 @@ export const PlantCompanion: React.FC<PlantCompanionProps> = ({
 
             {/* ESP32 Soil Sensor Probe illustration inserted in soil */}
             <g className="sensor-probe-graphic" transform="translate(142, 126)">
-              <rect x="0" y="0" width="7" height="42" rx="2" fill="#183629" stroke="#52b788" strokeWidth="1" />
-              <circle cx="3.5" cy="5" r="1.5" fill={isPumpOn ? '#38bdf8' : '#10b981'} className={isPumpOn ? 'pulse-dot' : ''} />
-              <path d="M1 20 L6 20 M1 26 L6 26 M1 32 L6 32" stroke="#52b788" strokeWidth="0.8" />
+              <rect x="0" y="0" width="7" height="42" rx="2" fill="#183629" stroke={isOnline ? '#52b788' : '#f87171'} strokeWidth="1" />
+              <circle cx="3.5" cy="5" r="1.5" fill={effectivePumpOn ? '#38bdf8' : isOnline ? '#10b981' : '#f87171'} className={effectivePumpOn ? 'pulse-dot' : ''} />
+              <path d="M1 20 L6 20 M1 26 L6 26 M1 32 L6 32" stroke={isOnline ? '#52b788' : 'rgba(248, 113, 113, 0.4)'} strokeWidth="0.8" />
             </g>
 
             {/* Gradients */}
@@ -250,13 +260,19 @@ export const PlantCompanion: React.FC<PlantCompanionProps> = ({
 
         {/* Conversational Assistant Bubble */}
         <div className="plant-speech-bubble">
-          <div className="speech-icon-wrapper">
-            <Sparkles size={16} color="#52b788" />
+          <div className="speech-icon-wrapper" style={{ background: isOnline ? 'rgba(82, 183, 136, 0.15)' : 'rgba(239, 68, 68, 0.15)' }}>
+            {isOnline ? (
+              <Sparkles size={16} color="#52b788" />
+            ) : (
+              <WifiOff size={16} color="#f87171" />
+            )}
           </div>
           <div style={{ flex: 1 }}>
-            <p className="speech-text">{statusMessage}</p>
+            <p className="speech-text" style={{ color: isOnline ? 'var(--text-main)' : '#fca5a5' }}>
+              {statusMessage}
+            </p>
           </div>
-          {!isPumpOn && moisture !== null && moisture < 40 && (
+          {isOnline && !effectivePumpOn && moisture !== null && moisture < 40 && (
             <button
               onClick={onQuickWater}
               className="speech-action-btn"
@@ -265,6 +281,26 @@ export const PlantCompanion: React.FC<PlantCompanionProps> = ({
               <Droplet size={13} />
               <span>Give Water</span>
             </button>
+          )}
+          {!isOnline && (
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: '#7dd3fc',
+                background: 'rgba(56, 189, 248, 0.15)',
+                border: '1px solid rgba(56, 189, 248, 0.35)',
+                padding: '4px 10px',
+                borderRadius: 99,
+                whiteSpace: 'nowrap',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <span className="radar-scan-dot" style={{ width: 6, height: 6 }} />
+              Scanning for ESP32...
+            </span>
           )}
         </div>
       </div>
