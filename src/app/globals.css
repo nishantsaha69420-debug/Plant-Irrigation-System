@@ -33,7 +33,13 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  cursor: none !important;
+}
+
+/* Hide cursor only on desktop (pointer-based devices) */
+@media (pointer: fine) {
+  * {
+    cursor: none !important;
+  }
 }
 
 body {
@@ -49,7 +55,6 @@ body {
   position: relative;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
-  cursor: none;
 }
 
 /* Subtle Organic Leaf Noise Pattern Overlay */
@@ -1467,3 +1472,365 @@ body::before {
   100% { left: 100%; }
 }
 
+/* ======================================================================
+   MOBILE RESPONSIVE STYLES
+   Keep desktop site exactly as-is. These only apply on small viewports.
+   ====================================================================== */
+
+@media (max-width: 640px) {
+  /* --- App Container --- */
+  .app-container {
+    padding: 8px 6px 32px;
+    gap: 14px;
+  }
+
+  /* --- Glass Panel --- */
+  .glass-panel {
+    border-radius: 18px;
+  }
+
+  /* --- Header --- */
+  .dashboard-header {
+    padding: 14px 14px;
+    gap: 12px;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .brand-icon-wrapper {
+    width: 40px;
+    height: 40px;
+    border-radius: 14px;
+  }
+
+  .brand-title {
+    font-size: 20px;
+  }
+
+  .brand-tagline {
+    font-size: 11px;
+  }
+
+  .header-plant-selector {
+    padding: 6px 12px;
+    font-size: 12px;
+    align-self: flex-start;
+  }
+
+  .header-actions-group {
+    width: 100%;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .tool-badge-btn {
+    padding: 5px 10px;
+    font-size: 11px;
+  }
+
+  .status-badge {
+    padding: 5px 10px;
+    font-size: 10px;
+  }
+
+  /* --- Dashboard Content --- */
+  .dashboard-content {
+    padding: 14px 10px;
+    gap: 16px;
+  }
+
+  /* --- ESP32 Offline Banner --- */
+  .esp-offline-banner {
+    flex-direction: column;
+    padding: 14px;
+    gap: 12px;
+    border-radius: 14px;
+    align-items: flex-start;
+  }
+
+  .esp-offline-banner strong {
+    font-size: 13px;
+  }
+
+  .esp-offline-banner p {
+    font-size: 11px;
+  }
+
+  /* --- Hero Grid --- */
+  .hero-duo-grid {
+    gap: 14px;
+  }
+
+  /* --- Plant Companion Card --- */
+  .plant-companion-card {
+    border-radius: 18px;
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .plant-name-heading {
+    font-size: 17px;
+  }
+
+  .plant-illustration-wrapper {
+    width: 180px;
+    height: 155px;
+  }
+
+  .plant-speech-bubble {
+    padding: 10px 12px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .speech-text {
+    font-size: 12px;
+  }
+
+  /* --- Moisture Centerpiece Card --- */
+  .moisture-centerpiece-card {
+    border-radius: 18px;
+    padding: 18px 14px;
+    gap: 14px;
+  }
+
+  .centerpiece-top-row {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .centerpiece-title {
+    font-size: 18px;
+  }
+
+  .moisture-hero-readout {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .readout-huge-number {
+    font-size: 48px;
+  }
+
+  .readout-unit {
+    font-size: 22px;
+  }
+
+  .readout-meta {
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .moisture-level-indicator {
+    flex-wrap: wrap;
+  }
+
+  .last-read-timestamp {
+    font-size: 10px;
+    word-break: break-word;
+  }
+
+  .bar-track {
+    height: 20px;
+  }
+
+  .target-zone-label {
+    font-size: 8px;
+  }
+
+  .scale-labels-row {
+    font-size: 9px;
+  }
+
+  .centerpiece-footer-info {
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  .info-item {
+    white-space: normal;
+    flex-shrink: 1;
+  }
+
+  /* --- Actuators Card --- */
+  .actuators-card {
+    border-radius: 18px;
+    padding: 16px;
+    gap: 14px;
+  }
+
+  .actuators-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .section-heading {
+    font-size: 17px;
+  }
+
+  .preset-buttons-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .preset-btn {
+    padding: 12px 14px;
+    border-radius: 14px;
+  }
+
+  .pump-action-btn {
+    padding: 14px;
+    font-size: 14px;
+    border-radius: 14px;
+  }
+
+  .active-spray-banner {
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    align-items: flex-start;
+  }
+
+  .safeguards-notice {
+    font-size: 11px;
+    padding: 8px 10px;
+    flex-wrap: wrap;
+  }
+
+  /* --- Environment / Telemetry Mini Cards --- */
+  .mini-telemetry-card {
+    border-radius: 16px;
+    padding: 14px 14px;
+  }
+
+  .mini-card-label {
+    font-size: 11px;
+  }
+
+  .mini-card-value {
+    font-size: 14px;
+  }
+
+  .mini-card-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+  }
+
+  /* --- Reservoir & Schedule Grid --- */
+  .reservoir-schedule-grid {
+    gap: 14px;
+  }
+
+  .sub-panel-card {
+    border-radius: 16px;
+    padding: 16px;
+  }
+
+  /* --- Telemetry Chart & Activity --- */
+  .history-card, .activity-card {
+    border-radius: 16px;
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .chart-wrapper {
+    height: 100px;
+  }
+
+  .section-title {
+    font-size: 11px;
+  }
+
+  .activity-item {
+    font-size: 12px;
+    padding: 6px 10px;
+  }
+
+  .activity-time {
+    font-size: 10px;
+  }
+
+  /* --- Footer --- */
+  .footer-tools {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  /* --- Modals --- */
+  .modal-overlay {
+    padding: 12px;
+    align-items: flex-end;
+  }
+
+  .modal-dialog {
+    border-radius: 22px 22px 12px 12px;
+    padding: 20px 16px;
+    max-height: 85vh;
+    overflow-y: auto;
+  }
+
+  .plant-preset-card {
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  .input-field {
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+}
+
+/* Extra-small screens (below 380px) */
+@media (max-width: 380px) {
+  .app-container {
+    padding: 4px 4px 24px;
+  }
+
+  .glass-panel {
+    border-radius: 14px;
+  }
+
+  .dashboard-header {
+    padding: 10px 10px;
+  }
+
+  .brand-title {
+    font-size: 18px;
+  }
+
+  .dashboard-content {
+    padding: 10px 8px;
+    gap: 12px;
+  }
+
+  .readout-huge-number {
+    font-size: 40px;
+  }
+
+  .readout-unit {
+    font-size: 18px;
+  }
+
+  .moisture-centerpiece-card {
+    padding: 14px 10px;
+  }
+
+  .plant-companion-card {
+    padding: 12px;
+  }
+
+  .actuators-card {
+    padding: 12px;
+  }
+
+  .modal-dialog {
+    padding: 16px 12px;
+  }
+}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
 
 interface TrailDot {
   x: number;
@@ -9,7 +9,28 @@ interface TrailDot {
   scale: number;
 }
 
+/**
+ * Returns true if the device has a fine pointer (mouse) — i.e. NOT a touch-only device.
+ * On mobile/tablets this returns false, disabling the trail entirely.
+ */
+function useIsPointerDevice(): boolean {
+  const [isPointer, setIsPointer] = useState(false);
+
+  useEffect(() => {
+    // Check for fine pointer (mouse / trackpad) — excludes touch-only devices
+    const mq = window.matchMedia('(pointer: fine)');
+    setIsPointer(mq.matches);
+
+    const handler = (e: MediaQueryListEvent) => setIsPointer(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  return isPointer;
+}
+
 export const MouseTrail: React.FC = () => {
+  const isPointer = useIsPointerDevice();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dotsRef = useRef<TrailDot[]>([]);
   const mouseRef = useRef({ x: -100, y: -100 });
@@ -73,6 +94,9 @@ export const MouseTrail: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // Don't attach listeners or run animation on touch-only devices
+    if (!isPointer) return;
+
     const handleMouseMove = (e: MouseEvent) => {
       mouseRef.current = { x: e.clientX, y: e.clientY };
     };
@@ -95,7 +119,10 @@ export const MouseTrail: React.FC = () => {
       window.removeEventListener('resize', handleResize);
       cancelAnimationFrame(animRef.current);
     };
-  }, [draw]);
+  }, [draw, isPointer]);
+
+  // Don't render canvas at all on touch devices
+  if (!isPointer) return null;
 
   return (
     <canvas
