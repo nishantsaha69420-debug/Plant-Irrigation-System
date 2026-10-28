@@ -1,7 +1,20 @@
 'use client';
 
 import React from 'react';
-import { Sprout, Volume2, VolumeX, Sliders, PlayCircle, StopCircle, RefreshCw, ChevronDown } from 'lucide-react';
+import Link from 'next/link';
+import {
+  Sprout,
+  Volume2,
+  VolumeX,
+  Sliders,
+  PlayCircle,
+  StopCircle,
+  RefreshCw,
+  ChevronDown,
+  User as UserIcon,
+  LogOut,
+  LogIn,
+} from 'lucide-react';
 
 interface HeaderProps {
   isConnected: boolean;
@@ -15,6 +28,8 @@ interface HeaderProps {
   plantName: string;
   onOpenPlantProfile: () => void;
   isScanning?: boolean;
+  user?: { displayName?: string | null; email?: string | null } | null;
+  onLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -29,6 +44,8 @@ export const Header: React.FC<HeaderProps> = ({
   plantName,
   onOpenPlantProfile,
   isScanning = false,
+  user,
+  onLogout,
 }) => {
   return (
     <header className="dashboard-header">
@@ -95,6 +112,37 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <Sliders size={14} />
         </button>
+
+        {/* User Account / Sign In / Sign Out */}
+        {user ? (
+          <div className="header-auth-cluster">
+            <div className="user-badge" title={user.email || 'Rootwise User'}>
+              <UserIcon size={14} color="var(--brand-sage)" />
+              <span className="user-badge-name">
+                {user.displayName || user.email?.split('@')[0] || 'Grower'}
+              </span>
+            </div>
+            <button
+              onClick={onLogout}
+              className="tool-badge-btn logout-btn"
+              title="Sign Out of Rootwise"
+              type="button"
+            >
+              <LogOut size={14} />
+              <span>Sign Out</span>
+            </button>
+          </div>
+        ) : (
+          <Link
+            href="/login"
+            className="tool-badge-btn login-btn"
+            title="Sign In to Rootwise"
+          >
+            <LogIn size={14} />
+            <span>Sign In</span>
+          </Link>
+        )}
+
 
         {/* Real Hardware Verification Status Badge */}
         <div

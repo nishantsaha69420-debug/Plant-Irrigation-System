@@ -1,8 +1,8 @@
 // ESP32 Soil Sensor Inverted 12-bit ADC Calibration
 // In ESP32, 4095 is dry air = 0% moisture.
-// Submerged / water saturated is typically ~1200 (or 0).
+// Submerged / water saturated is typically ~1500 (or 0).
 export const DEFAULT_DRY_ADC = 4095; // 0% moisture
-export const DEFAULT_WET_ADC = 1200; // 100% moisture
+export const DEFAULT_WET_ADC = 1500; // 100% moisture
 
 export interface CalibratedReading {
   percentage: number;
@@ -20,7 +20,7 @@ export function parseAndCalibrateMoisture(
 
   // If the reading is an ADC value (> 100), invert and map:
   // 4095 -> 0%
-  // wetAdc (1200) -> 100%
+  // wetAdc (1500) -> 100%
   if (num > 100) {
     const span = dryAdc - wetAdc;
     const calculated = span !== 0 ? ((dryAdc - num) / span) * 100 : 0;

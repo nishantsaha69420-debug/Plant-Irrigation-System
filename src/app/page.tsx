@@ -17,11 +17,16 @@ import { MouseTrail } from '@/components/MouseTrail';
 import { parseAndCalibrateMoisture } from '@/lib/calibration';
 import { playSound } from '@/lib/sounds';
 import { TelemetryData, ActivityLog, HistoryPoint } from '@/types';
+import { useAuth } from '@/context/AuthContext';
+import { useRouter } from 'next/navigation';
 
 // How many seconds without a new telemetry update before we consider ESP32 offline
 const ESP_OFFLINE_THRESHOLD_SEC = 6;
 
 export default function RootwiseDashboardPage() {
+  const { user, loading: authLoading, logout } = useAuth();
+  const router = useRouter();
+
   const [dbUrl, setDbUrl] = useState<string>(DEFAULT_FIREBASE_CONFIG.databaseURL);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isEspOnline, setIsEspOnline] = useState<boolean>(false);
@@ -326,10 +331,34 @@ export default function RootwiseDashboardPage() {
     }, 500);
   };
 
+  // Protection: redirect unauthenticated visitors to login
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace('/login?redirect=/');
+    }
+  }, [authLoading, user, router]);
+
   // Use isEspOnline for actual hardware status (not just Firebase connectivity)
   const effectiveOnline = isSimulated || isEspOnline;
 
   const targetRange: [number, number] = [currentPlant.minMoisture, currentPlant.maxMoisture];
+
+  if (authLoading) {
+    return (
+      <>
+        <MouseTrail />
+        <ForestBackground />
+        <main className="app-container" style={{ minHeight: '80vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="glass-panel" style={{ padding: '40px 48px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+            <div className="auth-spinner" />
+            <p style={{ color: 'var(--brand-sage)', fontSize: '0.95rem', fontWeight: 500 }}>
+              Connecting to living soil ecosystem...
+            </p>
+          </div>
+        </main>
+      </>
+    );
+  }
 
   return (
     <>
@@ -363,7 +392,10 @@ export default function RootwiseDashboardPage() {
               if (soundEnabled) playSound('click');
               setIsPlantModalOpen(true);
             }}
+            user={user}
+            onLogout={logout}
           />
+
 
           <div className="dashboard-content">
             {/* ESP32 Continuous Discovery & Scanning Banner */}
