@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Please enter both email and password.' }, { status: 400 });
     }
 
-    const userRecord = findUserByEmail(cleanEmail);
+    const userRecord = await findUserByEmail(cleanEmail);
     if (!userRecord) {
       return NextResponse.json({ error: 'Invalid email or password.' }, { status: 401 });
     }
@@ -65,7 +65,11 @@ export async function POST(request: NextRequest) {
     });
 
     return response;
-  } catch {
-    return NextResponse.json({ error: 'Login service failed. Please try again.' }, { status: 500 });
+  } catch (err: any) {
+    console.error('Login error in POST /api/auth/login:', err);
+    return NextResponse.json(
+      { error: err?.message || 'Login service failed. Please try again.' },
+      { status: 500 }
+    );
   }
 }

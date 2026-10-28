@@ -7,7 +7,7 @@ import {
   updateProfile,
   signOut,
 } from 'firebase/auth';
-import { getFirebaseAuth } from '@/lib/firebase';
+import { getFirebaseAuth, DEFAULT_FIREBASE_CONFIG } from '@/lib/firebase';
 
 export interface UserProfile {
   uid: string;
@@ -89,10 +89,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setUser(data.user);
 
-      // 2. Synchronize with Firebase Auth if configured
+      // 2. Synchronize with Firebase Auth if configured with a real production key
       try {
         const auth = getFirebaseAuth();
-        if (auth) {
+        const isRealKey = DEFAULT_FIREBASE_CONFIG.apiKey && !DEFAULT_FIREBASE_CONFIG.apiKey.includes('Dummy') && !DEFAULT_FIREBASE_CONFIG.apiKey.includes('Development');
+        if (auth && isRealKey) {
           await signInWithEmailAndPassword(auth, email.trim(), password);
         }
       } catch {
@@ -137,10 +138,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setUser(data.user);
 
-      // 2. Also register in Firebase Auth if available
+      // 2. Also register in Firebase Auth if available with real key
       try {
         const auth = getFirebaseAuth();
-        if (auth) {
+        const isRealKey = DEFAULT_FIREBASE_CONFIG.apiKey && !DEFAULT_FIREBASE_CONFIG.apiKey.includes('Dummy') && !DEFAULT_FIREBASE_CONFIG.apiKey.includes('Development');
+        if (auth && isRealKey) {
           const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
           if (name.trim()) {
             await updateProfile(cred.user, { displayName: name.trim() });

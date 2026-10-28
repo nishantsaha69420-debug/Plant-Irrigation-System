@@ -37,13 +37,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Password must be at least 8 characters long.' }, { status: 400 });
     }
 
-    const existing = findUserByEmail(cleanEmail);
+    const existing = await findUserByEmail(cleanEmail);
     if (existing) {
       return NextResponse.json({ error: 'An account with this email address already exists. Please log in.' }, { status: 409 });
     }
 
     const cleanName = sanitize(name);
-    const userRecord = createUserRecord(cleanName, cleanEmail, password);
+    const userRecord = await createUserRecord(cleanName, cleanEmail, password);
 
     const payload: SessionPayload = {
       uid: userRecord.uid,
@@ -74,6 +74,7 @@ export async function POST(request: NextRequest) {
 
     return response;
   } catch (err: any) {
+    console.error('Signup error in POST /api/auth/signup:', err);
     return NextResponse.json(
       { error: err?.message || 'Failed to create account. Please try again.' },
       { status: 500 }

@@ -13,18 +13,36 @@ export interface UserRecord {
 const DATA_DIR = path.join(process.cwd(), '.data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
+const FIREBASE_DB_URL =
+  process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL ||
+  'https://auto-irrigation-system-8225b-default-rtdb.asia-southeast1.firebasedatabase.app';
+
+function getDbBaseUrl(): string {
+  return FIREBASE_DB_URL.replace(/\/+$/, '');
+}
+
+export function emailToKey(email: string): string {
+  return Buffer.from(email.trim().toLowerCase()).toString('hex');
+}
+
 function ensureDataFile() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-  if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, JSON.stringify([], null, 2), 'utf-8');
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(USERS_FILE)) {
+      fs.writeFileSync(USERS_FILE, JSON.stringify([], null, 2), 'utf-8');
+    }
+  } catch {
+    // In serverless / read-only filesystems (e.g. Vercel), writing to process.cwd() is prohibited
+    // Silently continue since cloud database is our primary store
   }
 }
 
-function readUsers(): UserRecord[] {
-  ensureDataFile();
+function readLocalUsers(): UserRecord[] {
   try {
+    ensureDataFile();
+    if (!fs.existsSync(USERS_FILE)) return [];
     const raw = fs.readFileSync(USERS_FILE, 'utf-8');
     return JSON.parse(raw) as UserRecord[];
   } catch {
@@ -32,9 +50,13 @@ function readUsers(): UserRecord[] {
   }
 }
 
-function writeUsers(users: UserRecord[]) {
-  ensureDataFile();
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf-8');
+function writeLocalUsers(users: UserRecord[]) {
+  try {
+    ensureDataFile();
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf-8');
+  } catch {
+    // Ignored in read-only filesystems
+  }
 }
 
 /**
@@ -61,17 +83,47 @@ export function verifyPassword(password: string, storedHash: string): boolean {
   }
 }
 
-export function findUserByEmail(email: string): UserRecord | null {
-  const users = readUsers();
+/**
+ * Look up user by email from Firebase Realtime Database with local file fallback
+ */
+export async function findUserByEmail(email: string): Promise<UserRecord | null> {
   const normalized = email.trim().toLowerCase();
-  return users.find((u) => u.email.toLowerCase() === normalized) || null;
+  const key = emailToKey(normalized);
+
+  // 1. Try Firebase Cloud RTDB
+  try {
+    const res = await fetch(`${getDbBaseUrl()}/users/${key}.json`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    });
+    if (res.ok) {
+      const user = (await res.json()) as UserRecord | null;
+      if (user && user.email) {
+        return user;
+      }
+    }
+  } catch (err) {
+    console.warn('Firebase RTDB query error, falling back to local storage:', err);
+  }
+
+  // 2. Fallback to local storage (for offline or local development)
+  const localUsers = readLocalUsers();
+  return localUsers.find((u) => u.email.toLowerCase() === normalized) || null;
 }
 
-export function createUserRecord(name: string, email: string, password: string): UserRecord {
-  const users = readUsers();
+/**
+ * Create a new user record in Firebase Realtime Database and local storage
+ */
+export async function createUserRecord(
+  name: string,
+  email: string,
+  password: string
+): Promise<UserRecord> {
   const normalizedEmail = email.trim().toLowerCase();
 
-  if (users.some((u) => u.email.toLowerCase() === normalizedEmail)) {
+  const existing = await findUserByEmail(normalizedEmail);
+  if (existing) {
     throw new Error('An account with this email address already exists.');
   }
 
@@ -84,7 +136,25 @@ export function createUserRecord(name: string, email: string, password: string):
     createdAt: Date.now(),
   };
 
-  users.push(newRecord);
-  writeUsers(users);
+  // 1. Store in Firebase Cloud RTDB
+  const key = emailToKey(normalizedEmail);
+  try {
+    const res = await fetch(`${getDbBaseUrl()}/users/${key}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newRecord),
+    });
+    if (!res.ok) {
+      console.warn(`Firebase RTDB write returned status ${res.status}`);
+    }
+  } catch (err) {
+    console.warn('Failed to persist user in Firebase RTDB, saving locally:', err);
+  }
+
+  // 2. Also cache in local file if available
+  const localUsers = readLocalUsers();
+  localUsers.push(newRecord);
+  writeLocalUsers(localUsers);
+
   return newRecord;
 }
