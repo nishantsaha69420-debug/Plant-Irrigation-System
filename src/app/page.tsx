@@ -7,6 +7,7 @@ import { ForestBackground } from '@/components/ForestBackground';
 import { Header } from '@/components/Header';
 import { PlantCompanion } from '@/components/PlantCompanion';
 import { MoistureGauge } from '@/components/MoistureGauge';
+import { EnvironmentalConditionsCard } from '@/components/EnvironmentalConditionsCard';
 import { PumpController } from '@/components/PumpController';
 import { EnvironmentCards } from '@/components/EnvironmentCards';
 import { TelemetryChart } from '@/components/TelemetryChart';
@@ -19,6 +20,7 @@ import { playSound } from '@/lib/sounds';
 import { TelemetryData, ActivityLog, HistoryPoint } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
+import { gsap } from 'gsap';
 
 // How many seconds without a new telemetry update before we consider ESP32 offline
 const ESP_OFFLINE_THRESHOLD_SEC = 6;
@@ -35,6 +37,7 @@ export default function RootwiseDashboardPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isPlantModalOpen, setIsPlantModalOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isCommandPending, setIsCommandPending] = useState<boolean>(false);
 
   // Selected Plant Profile
   const [currentPlant, setCurrentPlant] = useState<PlantPreset>(PLANT_PRESETS[0]);
@@ -55,6 +58,8 @@ export default function RootwiseDashboardPage() {
   const lastTelemetryTimestampRef = useRef<number>(0);
   const isInitialSnapshotRef = useRef<boolean>(true);
   const espOnlineCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingCommandTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contentContainerRef = useRef<HTMLDivElement>(null);
 
   // Append Activity Log
   const addLog = useCallback((message: string, type: ActivityLog['type'] = 'info') => {
@@ -75,6 +80,25 @@ export default function RootwiseDashboardPage() {
       return updated.slice(-20);
     });
   }, []);
+
+  // GSAP Entrance animation on initial load
+  useEffect(() => {
+    if (typeof window === 'undefined' || authLoading) return;
+    const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReduced || !contentContainerRef.current) return;
+
+    const ctx = gsap.context(() => {
+      gsap.from('.gsap-card', {
+        opacity: 0,
+        y: 18,
+        duration: 0.5,
+        stagger: 0.08,
+        ease: 'power2.out',
+      });
+    }, contentContainerRef);
+
+    return () => ctx.revert();
+  }, [authLoading]);
 
   // ESP32 online heartbeat check — if no new telemetry in N seconds, mark offline
   useEffect(() => {
@@ -101,6 +125,60 @@ export default function RootwiseDashboardPage() {
     };
   }, [isSimulated]);
 
+  // Process incoming telemetry packet
+  const processIncomingTelemetry = useCallback(
+    (data: TelemetryData) => {
+      setTelemetry(data);
+
+      // 1. Primary Soil Moisture Display:
+      // Use moisturePct (0-100%) calculated by ESP32 firmware from dual probes.
+      // Do not re-average in frontend.
+      let finalMoisture: number | null = null;
+
+      if (data.moisturePct !== undefined && data.moisturePct !== null && data.moisturePct !== '') {
+        const parsed = typeof data.moisturePct === 'number' ? data.moisturePct : parseFloat(String(data.moisturePct));
+        if (!isNaN(parsed) && isFinite(parsed)) {
+          finalMoisture = Math.max(0, Math.min(100, Math.round(parsed)));
+        }
+      }
+
+      // Fallback for legacy firmware: calibrated reading from avgMoisture or moisture
+      if (finalMoisture === null) {
+        const rawVal = data.avgMoisture ?? data.moisture;
+        const calibrated = parseAndCalibrateMoisture(rawVal);
+        if (calibrated) {
+          finalMoisture = calibrated.percentage;
+        }
+      }
+
+      if (finalMoisture !== null) {
+        setMoisture(finalMoisture);
+        setLastUpdated(new Date().toLocaleTimeString());
+        recordHistory(finalMoisture);
+      }
+
+      // 2. Hardware state synchronization (source of truth is the ESP32)
+      if (typeof data.pumpOn === 'boolean') {
+        const confirmedState = data.pumpOn ? 'on' : 'off';
+        setPumpState(confirmedState);
+        setIsCommandPending(false);
+      }
+
+      if (typeof data.autoMode === 'boolean') {
+        setMode(data.autoMode ? 'auto' : 'manual');
+      }
+
+      // Log critical status transitions
+      if (data.thermalLockout && data.autoMode) {
+        // Temperature lockout active
+      }
+      if (data.sensorFault) {
+        // Sensor discrepancy fault active
+      }
+    },
+    [recordHistory]
+  );
+
   // Firebase Realtime Connection & Telemetry Stream
   useEffect(() => {
     if (isSimulated) return;
@@ -123,7 +201,7 @@ export default function RootwiseDashboardPage() {
         }
       });
 
-      // Telemetry stream listener — this is the real ESP32 heartbeat
+      // Telemetry stream listener — real ESP32 heartbeat
       const telemetryRef = ref(database, 'telemetry');
       const unsubscribeTelemetry = onValue(
         telemetryRef,
@@ -132,18 +210,14 @@ export default function RootwiseDashboardPage() {
           setIsLoading(false);
           if (!data) return;
 
-          // The very first snapshot delivered by Firebase RTDB on subscription
-          // is just the stale, historic data sitting in the cloud database.
-          // If the ESP32 is completely powered OFF, Firebase will send this snapshot
-          // once and then NEVER again.
-          // We only mark the ESP32 as ONLINE when an active packet is pushed by the hardware!
+          // Initial snapshot handling
           if (isInitialSnapshotRef.current) {
             isInitialSnapshotRef.current = false;
-            setTelemetry(data);
+            processIncomingTelemetry(data);
             return;
           }
 
-          // Active live telemetry packet received from ESP32!
+          // Active live telemetry packet received from ESP32
           lastTelemetryTimestampRef.current = Date.now();
           if (!isEspOnline) {
             addLog('ESP32 stream discovered on Wi-Fi! Live telemetry auto-connected.', 'success');
@@ -151,16 +225,7 @@ export default function RootwiseDashboardPage() {
           }
           setIsEspOnline(true);
 
-          setTelemetry(data);
-          const rawVal = data.moisture;
-
-          // Invert 12-bit ADC mapping: 4095 ADC -> 0% moisture
-          const calibrated = parseAndCalibrateMoisture(rawVal);
-          if (calibrated) {
-            setMoisture(calibrated.percentage);
-            setLastUpdated(new Date().toLocaleTimeString());
-            recordHistory(calibrated.percentage);
-          }
+          processIncomingTelemetry(data);
         },
         (error) => {
           console.warn('Firebase telemetry error:', error);
@@ -176,8 +241,7 @@ export default function RootwiseDashboardPage() {
       const unsubscribeCommands = onValue(commandsRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-          if (data.mode) setMode(data.mode);
-          if (data.pump) setPumpState(data.pump);
+          if (data.mode && !isEspOnline) setMode(data.mode);
         }
       });
 
@@ -193,7 +257,7 @@ export default function RootwiseDashboardPage() {
       setIsLoading(false);
       addLog(`Failed to connect: ${err?.message || 'Check database URL'}`, 'warning');
     }
-  }, [dbUrl, isSimulated, addLog, recordHistory]);
+  }, [dbUrl, isSimulated, isEspOnline, soundEnabled, addLog, processIncomingTelemetry]);
 
   // Actuator Command Dispatch
   const setPump = useCallback(
@@ -205,10 +269,22 @@ export default function RootwiseDashboardPage() {
         }
       }
 
-      setPumpState(state);
-      addLog(`Actuator: Water pump turned ${state.toUpperCase()}`, state === 'on' ? 'pump-on' : 'pump-off');
+      addLog(`Command dispatched: Turn pump ${state.toUpperCase()} (Awaiting ESP32 confirmation)...`, 'info');
 
-      if (isSimulated) return;
+      if (isSimulated) {
+        setPumpState(state);
+        addLog(`Actuator: Water pump turned ${state.toUpperCase()}`, state === 'on' ? 'pump-on' : 'pump-off');
+        return;
+      }
+
+      // Live Mode: do not claim pump succeeded until controller confirms state via telemetry.pumpOn
+      setIsCommandPending(true);
+
+      // Auto-clear pending state after 8 seconds if no confirmation arrives
+      if (pendingCommandTimeoutRef.current) clearTimeout(pendingCommandTimeoutRef.current);
+      pendingCommandTimeoutRef.current = setTimeout(() => {
+        setIsCommandPending(false);
+      }, 8000);
 
       if (dbRef.current) {
         const startTime = performance.now();
@@ -217,6 +293,7 @@ export default function RootwiseDashboardPage() {
             setLatencyMs(Math.round(performance.now() - startTime));
           })
           .catch((err) => {
+            setIsCommandPending(false);
             addLog(`Pump command error: ${err.message}`, 'warning');
           });
       }
@@ -228,16 +305,17 @@ export default function RootwiseDashboardPage() {
     if (soundEnabled) playSound('mode');
 
     const nextMode = mode === 'auto' ? 'manual' : 'auto';
-    setMode(nextMode);
-    addLog(`Mode switched to ${nextMode.toUpperCase()}`, 'info');
+    addLog(`Mode command dispatched: ${nextMode.toUpperCase()}`, 'info');
 
-    if (isSimulated) return;
+    if (isSimulated) {
+      setMode(nextMode);
+      return;
+    }
 
     if (dbRef.current) {
       const startTime = performance.now();
       set(ref(dbRef.current, 'commands'), { mode: nextMode, pump: 'off' })
         .then(() => {
-          setPumpState('off');
           setLatencyMs(Math.round(performance.now() - startTime));
         })
         .catch((err) => {
@@ -278,6 +356,21 @@ export default function RootwiseDashboardPage() {
         recordHistory(current);
         setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
 
+        // Update simulated telemetry packet with environmental fields
+        setTelemetry({
+          moisturePct: current,
+          avgMoisture: 4095 - Math.round((current / 100) * (4095 - 1500)),
+          soil1: 4095 - Math.round((current / 100) * (4095 - 1500)) - 30,
+          soil2: 4095 - Math.round((current / 100) * (4095 - 1500)) + 30,
+          temp: '27.4',
+          humidity: '62.0',
+          vpd: '1.14',
+          pumpOn: pumpState === 'on',
+          autoMode: mode === 'auto',
+          thermalLockout: false,
+          sensorFault: false,
+        });
+
         // Auto mode automated threshold trigger
         if (mode === 'auto') {
           if (current < currentPlant.minMoisture && pumpState === 'off') {
@@ -301,15 +394,29 @@ export default function RootwiseDashboardPage() {
     const nextState = !isSimulated;
     setIsSimulated(nextState);
     if (nextState) {
-      addLog('Demo Simulation Mode enabled. Generating virtual soil readings.', 'info');
-      setMoisture(46);
-      recordHistory(46);
+      addLog('Demo Simulation Mode enabled. Generating virtual soil & climate readings.', 'info');
+      setMoisture(48);
+      recordHistory(48);
+      setTelemetry({
+        moisturePct: 48,
+        avgMoisture: 2840,
+        soil1: 2810,
+        soil2: 2870,
+        temp: '28.2',
+        humidity: '58.0',
+        vpd: '1.28',
+        pumpOn: false,
+        autoMode: mode === 'auto',
+        thermalLockout: false,
+        sensorFault: false,
+      });
     } else {
       addLog('Reconnecting to live physical ESP32 stream.', 'info');
       setMoisture(null);
       isInitialSnapshotRef.current = true;
       lastTelemetryTimestampRef.current = 0;
       setIsEspOnline(false);
+      setTelemetry(null);
     }
   };
 
@@ -340,7 +447,6 @@ export default function RootwiseDashboardPage() {
 
   // Use isEspOnline for actual hardware status (not just Firebase connectivity)
   const effectiveOnline = isSimulated || isEspOnline;
-
   const targetRange: [number, number] = [currentPlant.minMoisture, currentPlant.maxMoisture];
 
   if (authLoading) {
@@ -370,7 +476,7 @@ export default function RootwiseDashboardPage() {
 
       <main className="app-container">
         <div className="glass-panel">
-          {/* Header — uses isEspOnline and passes active scanning state */}
+          {/* Header */}
           <Header
             isConnected={isEspOnline}
             isScanning={!effectiveOnline}
@@ -396,8 +502,7 @@ export default function RootwiseDashboardPage() {
             onLogout={logout}
           />
 
-
-          <div className="dashboard-content">
+          <div className="dashboard-content" ref={contentContainerRef}>
             {/* ESP32 Continuous Discovery & Scanning Banner */}
             {!effectiveOnline && (
               <div className="esp-offline-banner">
@@ -425,7 +530,7 @@ export default function RootwiseDashboardPage() {
             )}
 
             {/* Top Duo: Botanical Plant Companion & Moisture Centerpiece */}
-            <div className="hero-duo-grid">
+            <div className="hero-duo-grid gsap-card">
               <PlantCompanion
                 plantName={currentPlant.name}
                 location={currentPlant.location}
@@ -439,6 +544,10 @@ export default function RootwiseDashboardPage() {
 
               <MoistureGauge
                 moisture={moisture}
+                avgMoisture={telemetry?.avgMoisture}
+                soil1={telemetry?.soil1}
+                soil2={telemetry?.soil2}
+                sensorFault={Boolean(telemetry?.sensorFault)}
                 isPumpOn={effectiveOnline && pumpState === 'on'}
                 mode={mode}
                 lastUpdated={lastUpdated}
@@ -448,36 +557,62 @@ export default function RootwiseDashboardPage() {
               />
             </div>
 
+            {/* Section 2: Environmental Conditions Card (DHT11 Telemetry & Lockout Status) */}
+            <div className="gsap-card">
+              <EnvironmentalConditionsCard
+                temp={telemetry?.temp}
+                humidity={telemetry?.humidity}
+                vpd={telemetry?.vpd}
+                thermalLockout={Boolean(telemetry?.thermalLockout)}
+                autoMode={mode === 'auto'}
+                sensorFault={Boolean(telemetry?.sensorFault)}
+                isOnline={effectiveOnline}
+                isSimulated={isSimulated}
+              />
+            </div>
+
             {/* Actuator Controls */}
-            <PumpController
-              mode={mode}
-              pumpState={pumpState}
-              onSetPump={setPump}
-              onToggleMode={toggleMode}
-              disabled={!effectiveOnline}
-            />
+            <div className="gsap-card">
+              <PumpController
+                mode={mode}
+                pumpState={pumpState}
+                onSetPump={setPump}
+                onToggleMode={toggleMode}
+                disabled={!effectiveOnline}
+                thermalLockout={Boolean(telemetry?.thermalLockout)}
+                temp={telemetry?.temp}
+                sensorFault={Boolean(telemetry?.sensorFault)}
+                isPendingConfirmation={isCommandPending}
+              />
+            </div>
 
             {/* Environmental Readings & Hardware Status */}
-            <EnvironmentCards
-              telemetry={telemetry}
-              mode={mode}
-              pumpState={pumpState}
-              lastUpdated={lastUpdated}
-              latencyMs={latencyMs}
-              isOnline={effectiveOnline}
-            />
+            <div className="gsap-card">
+              <EnvironmentCards
+                telemetry={telemetry}
+                mode={mode}
+                pumpState={pumpState}
+                lastUpdated={lastUpdated}
+                latencyMs={latencyMs}
+                isOnline={effectiveOnline}
+              />
+            </div>
 
             {/* Realtime Moisture Trajectory Chart with Target Band */}
-            <TelemetryChart history={history} targetRange={targetRange} isOnline={effectiveOnline} />
+            <div className="gsap-card">
+              <TelemetryChart history={history} targetRange={targetRange} isOnline={effectiveOnline} />
+            </div>
 
             {/* Activity & Actuation Event Logs */}
-            <ActivityLogView
-              logs={logs}
-              onClear={() => {
-                if (soundEnabled) playSound('click');
-                setLogs([]);
-              }}
-            />
+            <div className="gsap-card">
+              <ActivityLogView
+                logs={logs}
+                onClear={() => {
+                  if (soundEnabled) playSound('click');
+                  setLogs([]);
+                }}
+              />
+            </div>
 
             {/* Footer */}
             <footer className="footer-tools">
