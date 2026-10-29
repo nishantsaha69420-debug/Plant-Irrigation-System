@@ -1,295 +1,195 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-
-/*
-  =============================================================================
-  ROOTWISE • ESP32-S3 SMART DUAL-SENSOR IRRIGATION FIRMWARE
-  =============================================================================
-  Features:
-  1. Dual Capacitive Soil Moisture Sensors on ADC1 pins (ADC1_CH3, ADC1_CH4).
-  2. analogSetAttenuation(ADC_11db) configured so full 0-3.1V range is read
-     (prevents ADC saturating at 4095 / 0% moisture).
-  3. DHT11 Temperature, Relative Humidity & Vapor Pressure Deficit (VPD) reading.
-  4. HARDWARE THERMAL LOCKOUT in AUTO mode when Temp > 35.0°C:
-     - Automatically cuts pump power.
-     - Sets thermalLockout = true in Firebase.
-  5. Dual Sensor Fault Detection (if sensor divergence > 800 ADC units).
-  6. Firebase Realtime Database telemetry push & bidirectional command pull.
-  =============================================================================
-*/
+#include "DHT.h"
 
 // --- Wi-Fi Credentials ---
-const char* ssid = "Sunando Acharya";
-const char* password = "123456789";
+const char* ssid = "Nishant ka phone";
+const char* password = "nishant1234";
 
 // --- Firebase Database URL (NO trailing slash) ---
 const String FIREBASE_URL = "https://auto-irrigation-system-8225b-default-rtdb.asia-southeast1.firebasedatabase.app";
 
-// --- Hardware Pin Definitions ---
-// IMPORTANT: Both soil sensors MUST use ADC1 pins because ADC2 is disabled when Wi-Fi is active!
-// On ESP32-S3: GPIO 1 to 10 are ADC1 pins.
-const int SOIL1_PIN  = 4;   // Sensor 1 Analog In (ESP32-S3 ADC1_CH3)
-const int SOIL2_PIN  = 5;   // Sensor 2 Analog In (ESP32-S3 ADC1_CH4)
-const int RELAY_PIN  = 6;   // Pump Relay Control (Active LOW on most relay modules)
-const int DHT_PIN    = 7;   // DHT11 Digital Pin
+// --- Hardware Pins ---
+const int DHT_PIN    = 4; // DHT11 Data Pin
+const int SOIL_PIN_1 = 5; // Soil Sensor 1 (AO)
+const int RELAY_PIN  = 6; // Relay IN Pin
+const int SOIL_PIN_2 = 7; // Soil Sensor 2 (AO)
 
-// --- Calibration Thresholds ---
-// Capacitive Sensor (with 11dB attenuation):
-// In dry air: ~3200 - 3500 raw ADC.
-// In saturated soil / water: ~1400 - 1600 raw ADC.
-const int DRY_ADC  = 3300;  // 0% moisture calibration
-const int WET_ADC  = 1500;  // 100% moisture calibration
+#define DHTTYPE DHT11
+DHT dht(DHT_PIN, DHTTYPE);
 
-const float MAX_SAFE_TEMP = 35.0; // °C - Thermal Lockout Threshold in Auto Mode
-const int AUTO_TRIGGER_MOISTURE = 40; // % - Auto water below 40%
-const int AUTO_TARGET_MOISTURE  = 70; // % - Auto stop at 70%
+// --- Thresholds & Calibration ---
+const int DRY_ADC_VAL          = 4095; // ADC reading in dry air (0% moisture)
+const int WET_ADC_VAL          = 1200; // ADC reading submerged in water (100% moisture)
+const int MOISTURE_THRESHOLD   = 2500; // Above this = Dry soil (Pump ON)
+const int CRITICAL_WILT_LIMIT  = 3500; // Emergency dry limit (overrides heat lockout)
+const float MAX_SAFE_TEMP      = 35.0; // Thermal lockout above 35C
+const int SENSOR_DELTA_LIMIT   = 5000; // Set to 5000 for 1-cup testing (Change to 1000 for fault demo)
 
-// --- System State Variables ---
-unsigned long lastCloudSync = 0;
+// --- Independent Non-Blocking Timers ---
+unsigned long lastSerialPrint = 0; // Runs every 1 second (1000 ms)
+unsigned long lastCloudSync   = 0; // Runs every 3 seconds (3000 ms)
+
 bool autoMode = true;
-bool pumpRunning = false;
-bool thermalLockout = false;
-bool sensorFault = false;
 
-// --- DHT11 Bit-Bang Driver (No external DHT library dependencies required) ---
-struct DHTResult {
-  float temp;
-  float humidity;
-  bool valid;
-};
-
-DHTResult readDHT11(int pin) {
-  DHTResult result = { 25.0, 60.0, false };
-  uint8_t data[5] = {0, 0, 0, 0, 0};
-
-  // Send start signal
-  pinMode(pin, OUTPUT);
-  digitalWrite(pin, LOW);
-  delay(18); // Keep LOW for at least 18ms
-  digitalWrite(pin, HIGH);
-  delayMicroseconds(30);
-  pinMode(pin, INPUT);
-
-  // Wait for DHT response
-  unsigned long timeout = micros();
-  while (digitalRead(pin) == HIGH) {
-    if (micros() - timeout > 100) return result;
-  }
-  timeout = micros();
-  while (digitalRead(pin) == LOW) {
-    if (micros() - timeout > 100) return result;
-  }
-  timeout = micros();
-  while (digitalRead(pin) == HIGH) {
-    if (micros() - timeout > 100) return result;
-  }
-
-  // Read 40 bits (5 bytes)
-  for (int i = 0; i < 40; i++) {
-    timeout = micros();
-    while (digitalRead(pin) == LOW) {
-      if (micros() - timeout > 100) return result;
-    }
-    unsigned long pulseStart = micros();
-    while (digitalRead(pin) == HIGH) {
-      if (micros() - pulseStart > 150) return result;
-    }
-    // A high pulse of > 40 microseconds is a '1', else '0'
-    if ((micros() - pulseStart) > 40) {
-      data[i / 8] |= (1 << (7 - (i % 8)));
-    }
-  }
-
-  // Verify checksum
-  if (data[4] == ((data[0] + data[1] + data[2] + data[3]) & 0xFF)) {
-    result.humidity = (float)data[0] + ((float)data[1] * 0.1);
-    result.temp = (float)data[2] + ((float)data[3] * 0.1);
-    result.valid = true;
-  }
-
-  return result;
-}
-
-// Calculate Vapor Pressure Deficit (VPD) in kPa
-float calculateVPD(float tempC, float humidityPct) {
-  // Saturation vapor pressure (Tetens formula)
-  float es = 0.61078 * exp((17.27 * tempC) / (tempC + 237.3));
-  // Actual vapor pressure
-  float ea = es * (humidityPct / 100.0);
-  // VPD in kPa
-  float vpd = es - ea;
-  return (vpd < 0.0) ? 0.0 : vpd;
-}
-
-// Filtered ADC reading (averages 10 samples to eliminate noise)
-int readFilteredADC(int pin) {
-  long sum = 0;
-  for (int i = 0; i < 10; i++) {
-    sum += analogRead(pin);
-    delay(5);
-  }
-  return (int)(sum / 10);
-}
-
-// Convert raw ADC to calibrated moisture percentage (0 - 100%)
-int convertAdcToPct(int rawAdc) {
-  if (rawAdc >= DRY_ADC) return 0;
-  if (rawAdc <= WET_ADC) return 100;
-  float pct = ((float)(DRY_ADC - rawAdc) / (float)(DRY_ADC - WET_ADC)) * 100.0;
-  return (int)constrain(pct, 0.0, 100.0);
-}
+// Shared state variables
+int soil1 = 0, soil2 = 0, avgMoisture = 0, moisturePct = 0;
+float tempC = 0.0, humidity = 0.0, vpd = 0.0;
+bool dhtError = false, sensorFault = false, thermalLockout = false, pumpRunning = false;
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n🌱 ROOTWISE ESP32-S3 INITIALIZING...");
 
-  // CRITICAL: Configure ADC attenuation to 11dB (allows reading up to ~3.1V)
-  // Without this, the ESP32 defaults to 0dB (~1.1V max), saturating at 4095 (0% moisture)!
+  // CRITICAL: Configure ADC attenuation to 11dB (0 - 3.1V full-scale)
+  // Without this, ESP32 ADC caps at 1.1V, causing soil sensors to read 4095 (0% moisture)!
   analogSetAttenuation(ADC_11db);
 
-  // Relay initialization (Active LOW: HIGH = OFF, LOW = ON)
   pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, HIGH); // Pump OFF by default
+  digitalWrite(RELAY_PIN, HIGH); // Pump OFF by default (Active-LOW relay)
 
-  // Analog pins configured as normal analog inputs
-  pinMode(SOIL1_PIN, INPUT);
-  pinMode(SOIL2_PIN, INPUT);
+  pinMode(SOIL_PIN_1, INPUT);
+  pinMode(SOIL_PIN_2, INPUT);
+
+  dht.begin();
 
   // Connect to Wi-Fi
-  Serial.print("Connecting to Wi-Fi: ");
-  Serial.println(ssid);
+  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-
-  int retries = 0;
-  while (WiFi.status() != WL_CONNECTED && retries < 30) {
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
-    retries++;
   }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n✅ Wi-Fi Connected! IP: " + WiFi.localIP().toString());
-  } else {
-    Serial.println("\n⚠️ Wi-Fi Connection Failed. Running offline safeguards.");
-  }
+  Serial.println("\nConnected to Wi-Fi! IP: " + WiFi.localIP().toString());
 }
 
 void loop() {
-  // Sync with cloud every 3 seconds
-  if (millis() - lastCloudSync >= 3000) {
-    lastCloudSync = millis();
+  unsigned long currentMillis = millis();
 
-    // 1. Read Soil Moisture from Dual Capacitive Sensors
-    int rawSoil1 = readFilteredADC(SOIL1_PIN);
-    int rawSoil2 = readFilteredADC(SOIL2_PIN);
-    int avgRaw = (rawSoil1 + rawSoil2) / 2;
+  // =========================================================================
+  // TASK 1: READ SENSORS & PRINT TO SERIAL MONITOR EVERY 1 SECOND (1000 ms)
+  // =========================================================================
+  if (currentMillis - lastSerialPrint >= 1000) {
+    lastSerialPrint = currentMillis;
 
-    // Check for sensor divergence fault (divergence > 800 ADC units)
-    sensorFault = (abs(rawSoil1 - rawSoil2) > 800);
+    // 1. Read Soil Sensors & Calculate Average + Percentage (0-100%)
+    soil1 = analogRead(SOIL_PIN_1);
+    soil2 = analogRead(SOIL_PIN_2);
+    avgMoisture = (soil1 + soil2) / 2;
+    moisturePct = constrain(map(avgMoisture, DRY_ADC_VAL, WET_ADC_VAL, 0, 100), 0, 100);
 
-    // Compute averaged moisture percentage
-    int moisturePct = convertAdcToPct(avgRaw);
+    sensorFault = (abs(soil1 - soil2) > SENSOR_DELTA_LIMIT);
 
-    // 2. Read Microclimate Telemetry (DHT11)
-    DHTResult dht = readDHT11(DHT_PIN);
-    float currentTemp = dht.valid ? dht.temp : 28.0;
-    float currentHumidity = dht.valid ? dht.humidity : 60.0;
-    float currentVpd = calculateVPD(currentTemp, currentHumidity);
+    // 2. Read Temperature & Humidity from DHT11
+    float rawTemp = dht.readTemperature();
+    float rawHum  = dht.readHumidity();
 
-    // 3. THERMAL LOCKOUT EVALUATION
-    // When temperature exceeds 35°C, thermalLockout is ACTIVE.
-    thermalLockout = (currentTemp > MAX_SAFE_TEMP);
-
-    // 4. AUTOMATIC IRRIGATION CONTROL LOGIC (with Thermal Lockout)
-    if (autoMode) {
-      if (thermalLockout) {
-        // SAFETY LOCKOUT: Force pump OFF when temp exceeds 35°C to protect root systems
-        digitalWrite(RELAY_PIN, HIGH);
-        pumpRunning = false;
-        Serial.println("⚠️ [THERMAL LOCKOUT ACTIVE] Temp: " + String(currentTemp, 1) + "°C > 35°C. Auto irrigation paused.");
-      } else if (sensorFault) {
-        // SENSOR FAULT: Pause auto irrigation if sensors diverge wildly
-        digitalWrite(RELAY_PIN, HIGH);
-        pumpRunning = false;
-        Serial.println("🚨 [SENSOR FAULT] Probes diverge significantly. Auto irrigation paused.");
-      } else {
-        // Normal Auto Irrigation
-        if (moisturePct < AUTO_TRIGGER_MOISTURE) {
-          digitalWrite(RELAY_PIN, LOW); // Turn Pump ON
-          pumpRunning = true;
-          Serial.println("💧 [AUTO IRRIGATION] Moisture: " + String(moisturePct) + "% < " + String(AUTO_TRIGGER_MOISTURE) + "%. Pump ON.");
-        } else if (moisturePct >= AUTO_TARGET_MOISTURE) {
-          digitalWrite(RELAY_PIN, HIGH); // Turn Pump OFF
-          pumpRunning = false;
-          Serial.println("🌱 [TARGET REACHED] Moisture: " + String(moisturePct) + "% >= " + String(AUTO_TARGET_MOISTURE) + "%. Pump OFF.");
-        } else {
-          // Maintain current state unless turned off
-          pumpRunning = (digitalRead(RELAY_PIN) == LOW);
-        }
-      }
+    if (isnan(rawTemp) || isnan(rawHum)) {
+      dhtError = true;
     } else {
-      // In Manual Mode: pump state is controlled strictly by user commands
-      pumpRunning = (digitalRead(RELAY_PIN) == LOW);
+      dhtError = false;
+      tempC = rawTemp;
+      humidity = rawHum;
+      // Calculate Vapor Pressure Deficit (VPD in kPa)
+      float es = 0.61078 * exp((17.27 * tempC) / (tempC + 237.3));
+      vpd = es * (1.0 - (humidity / 100.0));
     }
 
-    // 5. SEND TELEMETRY TO FIREBASE (PUT request to /telemetry.json)
-    if (WiFi.status() == WL_CONNECTED) {
-      HTTPClient http;
-      String url = FIREBASE_URL + "/telemetry.json";
-      http.begin(url);
-      http.addHeader("Content-Type", "application/json");
+    // 3. Evaluate Local Auto Logic
+    // When temperature exceeds 35°C, thermalLockout is STRICTLY ENFORCED in Auto mode
+    thermalLockout = (!dhtError && tempC > MAX_SAFE_TEMP);
 
-      // Construct JSON payload
-      String payload = "{";
-      payload += "\"soil1\":" + String(rawSoil1) + ",";
-      payload += "\"soil2\":" + String(rawSoil2) + ",";
-      payload += "\"avgMoisture\":" + String(avgRaw) + ",";
-      payload += "\"moisture\":" + String(avgRaw) + ",";
-      payload += "\"moisturePct\":" + String(moisturePct) + ",";
-      payload += "\"temp\":\"" + String(currentTemp, 1) + "\",";
-      payload += "\"humidity\":\"" + String(currentHumidity, 1) + "\",";
-      payload += "\"vpd\":\"" + String(currentVpd, 2) + "\",";
-      payload += "\"pumpOn\":" + String(pumpRunning ? "true" : "false") + ",";
-      payload += "\"autoMode\":" + String(autoMode ? "true" : "false") + ",";
-      payload += "\"thermalLockout\":" + String(thermalLockout ? "true" : "false") + ",";
-      payload += "\"sensorFault\":" + String(sensorFault ? "true" : "false");
-      payload += "}";
-
-      int httpResponseCode = http.PUT(payload);
-      if (httpResponseCode > 0) {
-        Serial.println("☁️ Telemetry Synced -> Moisture: " + String(moisturePct) + "% | Temp: " + String(currentTemp, 1) + "°C | Lockout: " + (thermalLockout ? "YES" : "NO"));
+    if (autoMode) {
+      if (thermalLockout) {
+        digitalWrite(RELAY_PIN, HIGH); // Pump strictly LOCKED OUT (OFF) when temp > 35°C
+      } else if (sensorFault) {
+        digitalWrite(RELAY_PIN, HIGH); // Pump OFF on sensor fault
+      } else if (avgMoisture > MOISTURE_THRESHOLD) {
+        digitalWrite(RELAY_PIN, LOW);  // Pump ON (Dry soil)
       } else {
-        Serial.println("❌ Telemetry PUT failed, code: " + String(httpResponseCode));
+        digitalWrite(RELAY_PIN, HIGH); // Pump OFF
       }
-      http.end();
+    }
 
-      // 6. FETCH COMMANDS FROM FIREBASE (GET request from /commands.json)
-      http.begin(FIREBASE_URL + "/commands.json");
-      int getCode = http.GET();
-      if (getCode > 0) {
-        String response = http.getString();
-        
-        // Mode Switch Command
-        if (response.indexOf("\"mode\":\"manual\"") != -1) {
-          autoMode = false;
-        } else if (response.indexOf("\"mode\":\"auto\"") != -1) {
-          autoMode = true;
-        }
+    pumpRunning = (digitalRead(RELAY_PIN) == LOW);
 
-        // Manual Pump Actuation (only executes in Manual Mode)
-        if (!autoMode) {
-          if (response.indexOf("\"pump\":\"on\"") != -1) {
-            digitalWrite(RELAY_PIN, LOW); // Turn Pump ON
-            pumpRunning = true;
-          } else if (response.indexOf("\"pump\":\"off\"") != -1) {
-            digitalWrite(RELAY_PIN, HIGH); // Turn Pump OFF
-            pumpRunning = false;
+    // 4. Print 1-Second Live Update to Serial Monitor
+    if (dhtError) {
+      Serial.printf("[1s Live] Temp: DHT_ERR | Soil1: %d | Soil2: %d | Avg: %d (%d%%) | Pump: %s\n",
+                    soil1, soil2, avgMoisture, moisturePct, pumpRunning ? "ON" : "OFF");
+    } else {
+      Serial.printf("[1s Live] Temp: %.1f °C | Hum: %.1f %% | VPD: %.2f kPa | Soil1: %d | Soil2: %d | Avg: %d (%d%%) | Pump: %s\n",
+                    tempC, humidity, vpd, soil1, soil2, avgMoisture, moisturePct, pumpRunning ? "ON" : "OFF");
+    }
+  }
+
+  // =========================================================================
+  // TASK 2: SYNC WITH FIREBASE CLOUD EVERY 3 SECONDS (3000 ms)
+  // =========================================================================
+  if (currentMillis - lastCloudSync >= 3000) {
+    lastCloudSync = currentMillis;
+
+    if (WiFi.status() == WL_CONNECTED) {
+      WiFiClientSecure client;
+      client.setInsecure();
+      HTTPClient http;
+
+      // 1. Fetch Remote Commands from Firebase
+      if (http.begin(client, FIREBASE_URL + "/commands.json")) {
+        int getCode = http.GET();
+        if (getCode == HTTP_CODE_OK) {
+          String response = http.getString();
+          JsonDocument cmdDoc;
+          if (!deserializeJson(cmdDoc, response)) {
+            const char* modeStr = cmdDoc["mode"];
+            const char* pumpStr = cmdDoc["pump"];
+
+            if (modeStr) {
+              if (strcmp(modeStr, "manual") == 0) autoMode = false;
+              else if (strcmp(modeStr, "auto") == 0) autoMode = true;
+            }
+
+            if (!autoMode && pumpStr) {
+              if (strcmp(pumpStr, "on") == 0) digitalWrite(RELAY_PIN, LOW);
+              else if (strcmp(pumpStr, "off") == 0) digitalWrite(RELAY_PIN, HIGH);
+            }
           }
         }
+        http.end();
       }
-      http.end();
+
+      pumpRunning = (digitalRead(RELAY_PIN) == LOW);
+
+      // 2. Push Latest Telemetry to Firebase
+      JsonDocument telDoc;
+      telDoc["moisture"]       = avgMoisture;
+      telDoc["avgMoisture"]    = avgMoisture;
+      telDoc["moisturePct"]    = moisturePct;
+      telDoc["soil1"]          = soil1;
+      telDoc["soil2"]          = soil2;
+      telDoc["temp"]           = serialized(String(tempC, 1));
+      telDoc["humidity"]       = serialized(String(humidity, 1));
+      telDoc["vpd"]            = serialized(String(vpd, 2));
+      telDoc["pumpOn"]         = pumpRunning;
+      telDoc["autoMode"]       = autoMode;
+      telDoc["sensorFault"]    = sensorFault;
+      telDoc["thermalLockout"] = thermalLockout;
+
+      String payload;
+      serializeJson(telDoc, payload);
+
+      if (http.begin(client, FIREBASE_URL + "/telemetry.json")) {
+        http.addHeader("Content-Type", "application/json");
+        int putCode = http.PUT(payload);
+        http.end();
+        Serial.printf("   >>> [Cloud Synced - HTTP %d]\n", putCode);
+      }
+    } else {
+      Serial.println("   >>> [Wi-Fi Disconnected! Reconnecting...]");
+      WiFi.reconnect();
     }
   }
 }

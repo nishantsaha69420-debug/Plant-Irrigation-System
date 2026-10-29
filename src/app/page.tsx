@@ -168,12 +168,24 @@ export default function RootwiseDashboardPage() {
         setMode(data.autoMode ? 'auto' : 'manual');
       }
 
-      // Log critical status transitions
-      if (data.thermalLockout && data.autoMode) {
-        // Temperature lockout active
-      }
-      if (data.sensorFault) {
-        // Sensor discrepancy fault active
+      // 3. Auto Mode Thermal Lockout Cloud Safeguard:
+      // If system is in autoMode and temp exceeds 35°C or thermalLockout is true,
+      // and physical pump is running, immediately send cutoff command to Firebase!
+      const parsedTemp =
+        data.temp !== undefined && data.temp !== null && data.temp !== ''
+          ? typeof data.temp === 'number'
+            ? data.temp
+            : parseFloat(String(data.temp))
+          : null;
+
+      const isThermalLockoutActive =
+        data.thermalLockout === true || (parsedTemp !== null && !isNaN(parsedTemp) && parsedTemp > 35.0);
+
+      if (data.autoMode && isThermalLockoutActive && data.pumpOn) {
+        if (dbRef.current) {
+          set(ref(dbRef.current, 'commands'), { mode: 'auto', pump: 'off' });
+          addLog('🚨 Thermal Lockout Active (>35°C): Auto pump shutdown command sent to cloud.', 'warning');
+        }
       }
     },
     [recordHistory]
@@ -262,6 +274,12 @@ export default function RootwiseDashboardPage() {
   // Actuator Command Dispatch
   const setPump = useCallback(
     (state: 'on' | 'off') => {
+      // In Auto Mode, manual pump actuation is strictly locked
+      if (mode === 'auto') {
+        addLog('Pump actuation blocked: Manual controls are locked in Auto Mode. Switch to Manual Mode to operate.', 'warning');
+        return;
+      }
+
       if (soundEnabled) {
         playSound(state === 'on' ? 'power-on' : 'power-off');
         if (state === 'on') {
@@ -449,6 +467,18 @@ export default function RootwiseDashboardPage() {
   const effectiveOnline = isSimulated || isEspOnline;
   const targetRange: [number, number] = [currentPlant.minMoisture, currentPlant.maxMoisture];
 
+  const currentTempNum =
+    telemetry?.temp !== undefined && telemetry?.temp !== null && telemetry?.temp !== ''
+      ? typeof telemetry.temp === 'number'
+        ? telemetry.temp
+        : parseFloat(String(telemetry.temp))
+      : null;
+
+  const isThermalLockout = Boolean(
+    telemetry?.thermalLockout === true ||
+      (currentTempNum !== null && !isNaN(currentTempNum) && currentTempNum > 35.0)
+  );
+
   if (authLoading) {
     return (
       <>
@@ -540,6 +570,7 @@ export default function RootwiseDashboardPage() {
                 onQuickWater={() => setPump('on')}
                 onOpenPlantProfile={() => setIsPlantModalOpen(true)}
                 isOnline={effectiveOnline}
+                thermalLockout={isThermalLockout}
               />
 
               <MoistureGauge
@@ -563,7 +594,7 @@ export default function RootwiseDashboardPage() {
                 temp={telemetry?.temp}
                 humidity={telemetry?.humidity}
                 vpd={telemetry?.vpd}
-                thermalLockout={Boolean(telemetry?.thermalLockout)}
+                thermalLockout={isThermalLockout}
                 autoMode={mode === 'auto'}
                 sensorFault={Boolean(telemetry?.sensorFault)}
                 isOnline={effectiveOnline}
@@ -579,7 +610,7 @@ export default function RootwiseDashboardPage() {
                 onSetPump={setPump}
                 onToggleMode={toggleMode}
                 disabled={!effectiveOnline}
-                thermalLockout={Boolean(telemetry?.thermalLockout)}
+                thermalLockout={isThermalLockout}
                 temp={telemetry?.temp}
                 sensorFault={Boolean(telemetry?.sensorFault)}
                 isPendingConfirmation={isCommandPending}

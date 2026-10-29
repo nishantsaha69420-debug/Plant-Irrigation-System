@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Power, Cpu, Droplet, Timer, ShieldCheck, WifiOff, AlertTriangle, ShieldAlert, Loader2 } from 'lucide-react';
+import { Power, Cpu, Droplet, Timer, ShieldCheck, WifiOff, AlertTriangle, ShieldAlert, Loader2, Lock } from 'lucide-react';
 
 interface PumpControllerProps {
   mode: 'auto' | 'manual';
@@ -38,6 +38,11 @@ export const PumpController: React.FC<PumpControllerProps> = ({
         : parseFloat(String(temp))
       : null;
 
+  const isHighTemp = numTemp !== null && !isNaN(numTemp) && numTemp > MAX_SAFE_TEMP;
+  const isThermalActive = thermalLockout || isHighTemp;
+  const isAutoMode = mode === 'auto';
+  const isAutoThermalLocked = isAutoMode && isThermalActive;
+
   // Countdown timer for presets
   useEffect(() => {
     if (secondsRemaining === null) return;
@@ -56,7 +61,8 @@ export const PumpController: React.FC<PumpControllerProps> = ({
   }, [secondsRemaining, onSetPump]);
 
   const handleStartPreset = (name: string, durationSec: number) => {
-    if (disabled || isPendingConfirmation) return;
+    // Strictly prevent preset actuation in Auto Mode, during thermal lockout, or while offline
+    if (disabled || isPendingConfirmation || isAutoMode || isAutoThermalLocked) return;
     setActivePreset(name);
     setSecondsRemaining(durationSec);
     onSetPump('on');
@@ -67,8 +73,6 @@ export const PumpController: React.FC<PumpControllerProps> = ({
     setActivePreset(null);
     onSetPump('off');
   };
-
-  const isAutoThermalLocked = mode === 'auto' && (thermalLockout || (numTemp !== null && numTemp > MAX_SAFE_TEMP));
 
   return (
     <div className="actuators-card">
@@ -99,36 +103,33 @@ export const PumpController: React.FC<PumpControllerProps> = ({
       {isAutoThermalLocked && (
         <div
           style={{
-            background: 'linear-gradient(90deg, rgba(239, 68, 68, 0.18), rgba(251, 146, 60, 0.15))',
-            border: '1.5px solid rgba(239, 68, 68, 0.5)',
+            background: 'linear-gradient(90deg, rgba(239, 68, 68, 0.22), rgba(251, 146, 60, 0.18))',
+            border: '2px solid rgba(239, 68, 68, 0.6)',
             borderRadius: 14,
-            padding: '12px 16px',
+            padding: '14px 18px',
             marginBottom: 16,
             display: 'flex',
             alignItems: 'flex-start',
-            gap: 12,
-            boxShadow: '0 4px 20px rgba(239, 68, 68, 0.15)',
+            gap: 14,
+            boxShadow: '0 6px 24px rgba(239, 68, 68, 0.25)',
           }}
         >
-          <AlertTriangle size={20} color="#f87171" style={{ flexShrink: 0, marginTop: 2 }} />
-          <div style={{ flex: 1, fontSize: 13, lineHeight: 1.5 }}>
-            <strong style={{ color: '#fca5a5', display: 'block', fontSize: 13.5, marginBottom: 2 }}>
-              Thermal Lockout Active — Automatic Irrigation Paused
+          <AlertTriangle size={24} color="#f87171" style={{ flexShrink: 0, marginTop: 2 }} />
+          <div style={{ flex: 1, fontSize: 13, lineHeight: 1.55 }}>
+            <strong style={{ color: '#ffffff', display: 'block', fontSize: 14, marginBottom: 3, letterSpacing: '0.02em' }}>
+              ⚠️ HARMFUL TO WATER: High Temperature ({numTemp !== null ? `${numTemp.toFixed(1)}°C` : '>35°C'}) Detected!
             </strong>
             <p style={{ color: '#fecdd3', margin: 0 }}>
-              Temperature is{' '}
-              <strong style={{ color: '#ffffff' }}>
-                {numTemp !== null && !isNaN(numTemp) ? `${numTemp.toFixed(1)}°C` : '>35.0°C'} / {MAX_SAFE_TEMP.toFixed(1)}°C limit
-              </strong>
-              . The physical ESP32 has blocked automatic irrigation to prevent thermal shock to hot root zones.
-              Switch to Manual Mode if an emergency manual irrigation is required.
+              Automatic irrigation is <strong>LOCKED OUT</strong> to prevent thermal root shock and rapid water evaporation.
+              Ambient temperature exceeds the <strong>{MAX_SAFE_TEMP.toFixed(1)}°C safety threshold</strong>.
+              Automated watering is completely halted. If emergency irrigation is required, switch to <strong>Manual Mode</strong> to override.
             </p>
           </div>
         </div>
       )}
 
       {/* AUTO Mode Sensor Fault Warning Banner */}
-      {mode === 'auto' && sensorFault && (
+      {isAutoMode && sensorFault && (
         <div
           style={{
             background: 'rgba(245, 158, 11, 0.15)',
@@ -163,22 +164,49 @@ export const PumpController: React.FC<PumpControllerProps> = ({
             type="button"
             onClick={onToggleMode}
             disabled={disabled}
-            className={`mode-toggle-pill ${mode === 'auto' ? 'mode-auto' : 'mode-manual'}`}
+            className={`mode-toggle-pill ${isAutoMode ? 'mode-auto' : 'mode-manual'}`}
             title={disabled ? 'Connect ESP32 to Wi-Fi to switch mode' : 'Click to toggle between Auto AI and Manual control'}
           >
             <Cpu size={14} />
-            <span>{disabled ? 'Offline' : mode === 'auto' ? 'AI Auto Mode' : 'Manual Mode'}</span>
+            <span>{disabled ? 'Offline' : isAutoMode ? 'AI Auto Mode' : 'Manual Mode'}</span>
           </button>
         </div>
       </div>
+
+      {/* Auto Mode Informational Lock Banner */}
+      {isAutoMode && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '10px 14px',
+            background: isAutoThermalLocked ? 'rgba(239, 68, 68, 0.12)' : 'rgba(82, 183, 136, 0.08)',
+            border: `1px solid ${isAutoThermalLocked ? 'rgba(239, 68, 68, 0.3)' : 'rgba(116, 198, 157, 0.2)'}`,
+            borderRadius: 12,
+            fontSize: 12,
+            color: isAutoThermalLocked ? '#fca5a5' : 'var(--text-muted)',
+            lineHeight: 1.45,
+          }}
+        >
+          <Lock size={15} color={isAutoThermalLocked ? '#f87171' : 'var(--brand-sage)'} style={{ flexShrink: 0 }} />
+          <span>
+            {isAutoThermalLocked ? (
+              <strong>Thermal Safety Lockout Active: Automated and manual watering triggers are blocked. Switch to Manual Mode to override.</strong>
+            ) : (
+              <span>Manual pump controls are locked in <strong>Auto Mode</strong>. The ESP32 governs watering autonomously based on soil thresholds. Switch to <strong>Manual Mode</strong> to take direct actuator control.</span>
+            )}
+          </span>
+        </div>
+      )}
 
       {/* Preset Friendly Watering Sips */}
       <div className="watering-presets-block">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span className="presets-title">Gentle Dosing Presets</span>
-          {mode === 'auto' && (
-            <span style={{ fontSize: 11, color: 'var(--brand-sage)' }}>
-              Managed by ESP32 thresholds in Auto Mode
+          {isAutoMode && (
+            <span style={{ fontSize: 11, color: isAutoThermalLocked ? '#f87171' : 'var(--brand-sage)', fontWeight: 600 }}>
+              {isAutoThermalLocked ? '🔒 Blocked (>35°C)' : '🔒 Locked in Auto Mode'}
             </span>
           )}
         </div>
@@ -186,11 +214,16 @@ export const PumpController: React.FC<PumpControllerProps> = ({
           <button
             type="button"
             onClick={() => handleStartPreset('Quick Sip', 5)}
-            disabled={disabled || secondsRemaining !== null || pumpState === 'on' || isPendingConfirmation}
+            disabled={disabled || secondsRemaining !== null || pumpState === 'on' || isPendingConfirmation || isAutoMode}
             className="preset-btn"
+            style={{
+              opacity: isAutoMode ? 0.45 : 1,
+              cursor: isAutoMode ? 'not-allowed' : 'pointer',
+            }}
+            title={isAutoMode ? 'Switch to Manual Mode to use dosing presets' : 'Run pump for 5 seconds'}
           >
             <div className="preset-icon-circle">
-              <Droplet size={15} />
+              {isAutoMode ? <Lock size={14} /> : <Droplet size={15} />}
             </div>
             <div className="preset-btn-text">
               <strong>Quick Sip</strong>
@@ -201,11 +234,16 @@ export const PumpController: React.FC<PumpControllerProps> = ({
           <button
             type="button"
             onClick={() => handleStartPreset('Standard Drink', 10)}
-            disabled={disabled || secondsRemaining !== null || pumpState === 'on' || isPendingConfirmation}
+            disabled={disabled || secondsRemaining !== null || pumpState === 'on' || isPendingConfirmation || isAutoMode}
             className="preset-btn"
+            style={{
+              opacity: isAutoMode ? 0.45 : 1,
+              cursor: isAutoMode ? 'not-allowed' : 'pointer',
+            }}
+            title={isAutoMode ? 'Switch to Manual Mode to use dosing presets' : 'Run pump for 10 seconds'}
           >
             <div className="preset-icon-circle">
-              <Droplet size={15} />
+              {isAutoMode ? <Lock size={14} /> : <Droplet size={15} />}
             </div>
             <div className="preset-btn-text">
               <strong>Standard Drink</strong>
@@ -216,11 +254,16 @@ export const PumpController: React.FC<PumpControllerProps> = ({
           <button
             type="button"
             onClick={() => handleStartPreset('Deep Soak', 20)}
-            disabled={disabled || secondsRemaining !== null || pumpState === 'on' || isPendingConfirmation}
+            disabled={disabled || secondsRemaining !== null || pumpState === 'on' || isPendingConfirmation || isAutoMode}
             className="preset-btn"
+            style={{
+              opacity: isAutoMode ? 0.45 : 1,
+              cursor: isAutoMode ? 'not-allowed' : 'pointer',
+            }}
+            title={isAutoMode ? 'Switch to Manual Mode to use dosing presets' : 'Run pump for 20 seconds'}
           >
             <div className="preset-icon-circle">
-              <Droplet size={15} />
+              {isAutoMode ? <Lock size={14} /> : <Droplet size={15} />}
             </div>
             <div className="preset-btn-text">
               <strong>Deep Soak</strong>
@@ -258,32 +301,59 @@ export const PumpController: React.FC<PumpControllerProps> = ({
           <button
             type="button"
             onClick={() => onSetPump('on')}
-            disabled={disabled || isPendingConfirmation}
+            disabled={disabled || isPendingConfirmation || isAutoMode}
             className="pump-action-btn btn-turn-on"
-            title="Start pump with 30s hardware failsafe"
+            style={{
+              opacity: isAutoMode ? 0.45 : 1,
+              cursor: isAutoMode ? 'not-allowed' : 'pointer',
+              background: isAutoThermalLocked
+                ? 'rgba(239, 68, 68, 0.15)'
+                : undefined,
+              borderColor: isAutoThermalLocked
+                ? 'rgba(239, 68, 68, 0.4)'
+                : undefined,
+            }}
+            title={
+              isAutoThermalLocked
+                ? 'Thermal Lockout Active: Switch to Manual Mode to override'
+                : isAutoMode
+                ? 'Switch to Manual Mode to operate pump manually'
+                : 'Start pump with 30s hardware failsafe'
+            }
           >
             {isPendingConfirmation ? (
               <>
                 <Loader2 size={18} className="animate-spin" />
                 <span>Verifying with ESP32...</span>
               </>
+            ) : isAutoThermalLocked ? (
+              <>
+                <Lock size={18} color="#f87171" />
+                <span style={{ color: '#fca5a5' }}>Blocked: Thermal Lockout (&gt;35°C)</span>
+              </>
+            ) : isAutoMode ? (
+              <>
+                <Lock size={18} />
+                <span>Locked in Auto Mode</span>
+              </>
             ) : (
               <>
                 <Power size={18} />
                 <span>Turn Pump ON</span>
-                {numTemp !== null && numTemp > MAX_SAFE_TEMP && (
+                {isHighTemp && (
                   <span
                     style={{
                       fontSize: 10,
-                      background: 'rgba(239, 68, 68, 0.3)',
-                      border: '1px solid rgba(239, 68, 68, 0.5)',
-                      padding: '2px 6px',
+                      background: 'rgba(239, 68, 68, 0.35)',
+                      border: '1px solid rgba(239, 68, 68, 0.6)',
+                      padding: '2px 7px',
                       borderRadius: 4,
                       marginLeft: 4,
-                      color: '#fca5a5',
+                      color: '#fecdd3',
+                      fontWeight: 700,
                     }}
                   >
-                    High Temp Override
+                    ⚠ Override Thermal Lockout
                   </span>
                 )}
               </>
@@ -305,7 +375,7 @@ export const PumpController: React.FC<PumpControllerProps> = ({
             ) : (
               <>
                 <Power size={18} />
-                <span>Turn Pump OFF</span>
+                <span>Turn Pump OFF (Stop)</span>
               </>
             )}
           </button>
@@ -316,8 +386,8 @@ export const PumpController: React.FC<PumpControllerProps> = ({
       <div className="safeguards-notice">
         <ShieldCheck size={15} color="#52b788" />
         <span>
-          <strong>Hardware Safeguards Enforced:</strong> Maximum continuous run duration is limited to 30 seconds.
-          Temperature safety lockout pauses automatic watering above {MAX_SAFE_TEMP.toFixed(1)}°C.
+          <strong>Hardware Safeguards Enforced:</strong> Automatic irrigation pauses when temperature exceeds {MAX_SAFE_TEMP.toFixed(1)}°C.
+          Manual pump runtime is hardware failsafe limited to 30 seconds.
         </span>
       </div>
     </div>

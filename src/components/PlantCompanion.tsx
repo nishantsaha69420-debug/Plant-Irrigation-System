@@ -12,6 +12,7 @@ interface PlantCompanionProps {
   onQuickWater: () => void;
   onOpenPlantProfile: () => void;
   isOnline?: boolean;
+  thermalLockout?: boolean;
 }
 
 export const PlantCompanion: React.FC<PlantCompanionProps> = ({
@@ -23,6 +24,7 @@ export const PlantCompanion: React.FC<PlantCompanionProps> = ({
   onQuickWater,
   onOpenPlantProfile,
   isOnline = false,
+  thermalLockout = false,
 }) => {
   // Never allow pump animation or drinking status if ESP32 is offline!
   const effectivePumpOn = isOnline && isPumpOn;
@@ -277,9 +279,31 @@ export const PlantCompanion: React.FC<PlantCompanionProps> = ({
               onClick={onQuickWater}
               className="speech-action-btn"
               type="button"
+              disabled={mode === 'auto'}
+              style={{
+                opacity: mode === 'auto' ? 0.5 : 1,
+                cursor: mode === 'auto' ? 'not-allowed' : 'pointer',
+                background:
+                  thermalLockout && mode === 'auto'
+                    ? 'rgba(239, 68, 68, 0.4)'
+                    : undefined,
+              }}
+              title={
+                thermalLockout && mode === 'auto'
+                  ? 'Thermal Lockout Active: Watering blocked because temp > 35°C'
+                  : mode === 'auto'
+                  ? 'Manual watering locked in Auto Mode. Switch to Manual Mode.'
+                  : 'Quick Water Plant'
+              }
             >
               <Droplet size={13} />
-              <span>Give Water</span>
+              <span>
+                {thermalLockout && mode === 'auto'
+                  ? 'Locked (>35°C)'
+                  : mode === 'auto'
+                  ? 'Locked in Auto'
+                  : 'Give Water'}
+              </span>
             </button>
           )}
           {!isOnline && (
