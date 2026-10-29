@@ -62,23 +62,24 @@ export const EnvironmentalConditionsCard: React.FC<EnvironmentalConditionsCardPr
     return () => ctx.revert();
   }, []);
 
+  const isLockoutActive = (thermalLockout || (parsedTemp !== null && parsedTemp > MAX_SAFE_TEMP)) && autoMode;
+
   // Restrained transition when thermal lockout state toggles
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (prefersReduced || !lockoutBannerRef.current) return;
 
-    if (thermalLockout && autoMode) {
+    if (isLockoutActive) {
       gsap.fromTo(
         lockoutBannerRef.current,
         { opacity: 0, y: -6 },
         { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' }
       );
     }
-  }, [thermalLockout, autoMode]);
+  }, [isLockoutActive]);
 
   const hasMissingTelemetry = effectiveActive && (parsedTemp === null || parsedHumidity === null);
-  const isLockoutActive = thermalLockout && autoMode;
 
   return (
     <div className="sub-panel-card environmental-conditions-card" ref={cardRef}>

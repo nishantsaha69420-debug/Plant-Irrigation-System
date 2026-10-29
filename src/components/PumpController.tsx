@@ -68,7 +68,7 @@ export const PumpController: React.FC<PumpControllerProps> = ({
     onSetPump('off');
   };
 
-  const isAutoThermalLocked = mode === 'auto' && thermalLockout;
+  const isAutoThermalLocked = mode === 'auto' && (thermalLockout || (numTemp !== null && numTemp > MAX_SAFE_TEMP));
 
   return (
     <div className="actuators-card">

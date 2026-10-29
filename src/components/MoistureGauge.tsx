@@ -92,6 +92,7 @@ export const MoistureGauge: React.FC<MoistureGaugeProps> = ({
   // Compute individual probe percentages for secondary diagnostic line
   const probe1Cal = soil1 !== undefined && soil1 !== null && soil1 !== '' ? parseAndCalibrateMoisture(soil1) : null;
   const probe2Cal = soil2 !== undefined && soil2 !== null && soil2 !== '' ? parseAndCalibrateMoisture(soil2) : null;
+  const isAtMaxADC = (Number(soil1) >= 4090 && Number(soil2) >= 4090);
 
   let conditionText = 'Awaiting Sensor Signal';
   let conditionBadgeClass = 'condition-neutral';
@@ -274,6 +275,27 @@ export const MoistureGauge: React.FC<MoistureGaugeProps> = ({
                 </span>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Hardware Tip when both sensors are at max ADC 4095 */}
+      {isAtMaxADC && (
+        <div
+          style={{
+            padding: '8px 12px',
+            background: 'rgba(245, 158, 11, 0.12)',
+            border: '1px solid rgba(245, 158, 11, 0.35)',
+            borderRadius: 10,
+            fontSize: 11.5,
+            color: '#fde68a',
+            lineHeight: 1.45,
+            textAlign: 'left',
+          }}
+        >
+          <strong>⚠️ Both probes reading dry rail (ADC 4095 = 0% moisture).</strong>
+          <div style={{ opacity: 0.9, marginTop: 2 }}>
+            If probes are already in moist soil, ensure: 1) Sensors are powered from <strong>5V/VIN</strong>, 2) Connected to <strong>ADC1 pins (GPIO 4 &amp; 5)</strong>, and 3) <code>analogSetAttenuation(ADC_11db)</code> is enabled in the ESP32 code.
           </div>
         </div>
       )}
